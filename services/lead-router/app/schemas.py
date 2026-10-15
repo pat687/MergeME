@@ -8,6 +8,7 @@ like an email.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date, datetime
 from typing import Any
 
@@ -81,22 +82,31 @@ US_STATES = frozenset(
 # [0-9], not \d: \d also matches Arabic-Indic and full-width digits, which would slip
 # through and then match no attorney's ZIP.
 ZIP_RE = re.compile(r"^[0-9]{5}\Z")
-ZIP_PLUS4_RE = re.compile(r"^([0-9]{5})(?:-[0-9]{4})?\Z")
-NAME_PUNCTUATION = frozenset(" '-.\u2019")
+ZIP_PLUS4_RE = re.compile(r"^([0-9]{5})(?:[- ]?[0-9]{4})?\Z")  # 60614, 60614-1234, 606141234
+# Commas for "Smith, Jr."; zero-width (non-)joiners are part of how some scripts are typed.
+NAME_PUNCTUATION = frozenset(" '-.,\u2019\u200c\u200d")
+UTM_MAX = 120
 
 
 def _digits(value: str) -> str:
     return re.sub(r"[^0-9]", "", value)
 
 
-def _check_name(value: str) -> str:
-    """Letters in any language plus spaces, hyphens, apostrophes and periods.
+def _is_letter_or_mark(ch: str) -> bool:
+    # Letters (L*) plus combining marks (M*): accents typed separately, and the vowel
+    # signs of scripts such as Devanagari or Tamil, which str.isalpha() says aren't letters.
+    return unicodedata.category(ch)[0] in "LM"
 
-    Blocks URLs, emails and digits, so the consumer receipt ("Hi <name>") can't be
-    turned into a phishing message sent from our domain.
+
+def _check_name(value: str) -> str:
+    """Letters in any language plus spaces, hyphens, apostrophes, periods and commas.
+
+    Blocks URLs, emails and digits, so no text a stranger types can turn an email we
+    send into a convincing phishing message.
     """
+    value = unicodedata.normalize("NFC", value)
     if not any(ch.isalpha() for ch in value) or not all(
-        ch.isalpha() or ch in NAME_PUNCTUATION for ch in value
+        _is_letter_or_mark(ch) or ch in NAME_PUNCTUATION for ch in value
     ):
         raise ValueError("use letters only (spaces, hyphens, apostrophes and periods are fine)")
     if re.search(r"\.[^\W\d_]", value):  # "J. R. Smith" is fine, "barrgo-login.net" isn't
@@ -150,12 +160,18 @@ class IntakeRequest(BaseModel):
     consent_version: str = Field(min_length=1, max_length=40)
     # Honeypot: hidden from humans by CSS. Bots fill every field, people don't.
     website: str = ""
-    utm_source: str | None = Field(default=None, max_length=120)
+    utm_source: str | None = Field(default=None, description=f"Trimmed to {UTM_MAX} characters")
 
     @field_validator("first_name", "last_name")
     @classmethod
     def _names(cls, value: str) -> str:
         return _check_name(value)
+
+    @field_validator("utm_source")
+    @classmethod
+    def _trim_utm(cls, value: str | None) -> str | None:
+        # Marketing tags come from links we don't control: trim, never reject the person.
+        return value[:UTM_MAX] if value else None
 
     @field_validator("phone")
     @classmethod
@@ -164,7 +180,7 @@ class IntakeRequest(BaseModel):
         if len(digits) == 11 and digits.startswith("1"):
             digits = digits[1:]
         if len(digits) != 10:
-            raise ValueError("phone must have 10 digits")
+            raise ValueError("phone number must have 10 digits")
         return digits
 
     @field_validator("zip_code")
@@ -172,7 +188,7 @@ class IntakeRequest(BaseModel):
     def _check_zip(cls, value: str) -> str:
         match = ZIP_PLUS4_RE.match(value)
         if not match:
-            raise ValueError("zip_code must be 5 digits (or ZIP+4, like 60614-1234)")
+            raise ValueError("ZIP code must be 5 digits (or ZIP+4, like 60614-1234)")
         return match.group(1)
 
     @field_validator("state")
@@ -348,6 +364,7 @@ class OfferOut(BaseModel):
     activated_at: datetime | None
     expires_at: datetime | None
     responded_at: datetime | None
+    decline_reason: str | None = None
     link: str | None = None
 
 

@@ -119,8 +119,11 @@ def test_no_eligible_attorney_means_no_buyer():
     assert result.skipped == {1: "not licensed in IL"}
 
 
-def test_ping_tree_never_lines_up_more_attorneys_than_the_consent_allows():
+def test_ping_tree_lines_up_every_bidder_and_leaves_the_limit_to_activation():
+    # The consent limit is enforced when each attorney is asked (offers.advance), so an
+    # attorney who is skipped later for being unavailable doesn't use up a place.
     bidders = [lawyer(i, bid=5000 + i * 100) for i in range(1, 8)]
     result = plan(DistributionModel.PING_TREE, bidders, max_recipients=3)
-    assert [o.attorney_id for o in result.offers] == [7, 6, 5]
-    assert sum("line-up already full" in r for r in result.skipped.values()) == 4
+    assert [o.attorney_id for o in result.offers] == [7, 6, 5, 4, 3, 2, 1]
+    assert [o.status for o in result.offers].count(OfferStatus.PENDING) == 1
+    assert "at most 3 will be asked" in result.note

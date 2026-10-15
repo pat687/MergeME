@@ -22,15 +22,30 @@ from app.domain.types import ChargeKind
 
 REDACTED = "[redacted]"
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_SEP = r"[\s.\-\u2010-\u2015]*"  # spaces, dots, hyphens and the various Unicode dashes
+_SEP = r"[\s./\-\u2010-\u2015]*"  # spaces, dots, slashes, hyphens and Unicode dashes
 _PHONE_RE = re.compile(
     rf"(?<![0-9])(?:\+?1{_SEP})?\(?[0-9]{{3}}\)?{_SEP}[0-9]{{3}}{_SEP}[0-9]{{4}}(?![0-9])"
 )
-# "12 Elm St", "4500 N Lake Shore Drive": capitalized, any suffix.
+# Between the digits of the person's own number: any mix of up to 3 separators.
+_DIGIT_GAP = r"[\s()./+\-\u2010-\u2015]{0,3}"
+# "12 Elm St", "4500 N Lake Shore Drive": a number, at least one capitalized word, a suffix.
+# Requiring the word keeps "6 Dr appointments" (doctor) intact.
 _STREET_CAPS_RE = re.compile(
-    r"\b[0-9]{1,6}\s+(?:[A-Z0-9][\w.'-]*\s+){0,4}"
-    r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Way|Place|Pl"
+    r"\b[0-9]{1,6}\s+((?:[A-Z0-9][\w.'-]*\s+){1,4})"
+    r"(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Way|Place|Pl"
     r"|Terrace|Ter|Parkway|Pkwy|Highway|Hwy|Circle|Cir)\b\.?"
+)
+# "In 2019 Family Court ..." is a courtroom, not an address.
+_COURT_WORDS = frozenset(
+    "family divorce circuit county district superior supreme juvenile probate traffic small "
+    "claims municipal housing appeals appellate bankruptcy federal state criminal civil drug "
+    "domestic relations tax chancery magistrate justice city".split()
+)
+# "I live at 4417 Kedzie": no suffix, but the lead-in makes it an address.
+_LIVES_AT_RE = re.compile(
+    r"(?i:\b((?:(?:live|lives|living|reside|resides|residing|stay|stays|staying)\s+(?:at|on)"
+    r"|address\s+is|address:)\s+))"
+    r"[0-9]{1,6}(?:\s+(?:[NSEWnsew]\.?(?!\w)|[A-Z][\w'.-]*)){1,3}"
 )
 # "12 elm st": lowercase only with unambiguous suffixes, and never across everyday words,
 # so "3 blocks down the street" or "2 cars on the way" are left alone.
@@ -60,6 +75,23 @@ def _redact_lower_street(match: re.Match) -> str:
     return match.group(0) if any(w in _FILLER for w in words) else REDACTED
 
 
+def _redact_caps_street(match: re.Match) -> str:
+    words = match.group(1).lower().split()
+    is_court = match.group(2) in ("Court", "Ct") and any(w in _COURT_WORDS for w in words)
+    return match.group(0) if is_court else REDACTED
+
+
+def _name_parts(name: str) -> list[str]:
+    """'Garcia-Lopez' -> ['Garcia-Lopez', 'Garcia', 'Lopez'], longest first."""
+    parts: set[str] = set()
+    for token in name.split():
+        for piece in [token, *re.split(r"[-'\u2019]", token)]:
+            piece = piece.strip(".,-'\u2019")
+            if len(piece) >= 2:
+                parts.add(piece)
+    return sorted(parts, key=len, reverse=True)
+
+
 class ComplianceError(ValueError):
     """Raised when code tries to record money in a way the rules don't allow."""
 
@@ -74,24 +106,25 @@ def redact(
     """Best-effort removal of contact details from free text shown before an attorney accepts.
 
     Removes email addresses, US phone numbers (any common separators), street
-    addresses and the person's own name in any capitalization. Names that are also
-    everyday words ("Will", "Grant") are only removed when capitalized, so the word
-    "will" survives.
+    addresses and the person's own name in any capitalization, including each part
+    of a hyphenated name. Names that are also everyday words ("Will", "Grant") are
+    only removed when capitalized, so the word "will" survives.
     """
     out = text
     if email:
         out = re.sub(re.escape(email), REDACTED, out, flags=re.IGNORECASE)
     out = _EMAIL_RE.sub(REDACTED, out)
     out = _PHONE_RE.sub(REDACTED, out)
-    if phone and len(phone) == 10:
-        out = re.sub(rf"(?<![0-9]){phone[3:6]}{_SEP}{phone[6:]}(?![0-9])", REDACTED, out)
-    out = _STREET_CAPS_RE.sub(REDACTED, out)
+    if phone and len(phone) == 10 and phone.isdigit():
+        # Their own number however it's written: "3 1 2 5 5 5 ...", "555/0142".
+        for digits in (phone, phone[3:]):
+            joined = _DIGIT_GAP.join(digits)
+            out = re.sub(rf"(?<![0-9])(?:1{_DIGIT_GAP})?{joined}(?![0-9])", REDACTED, out)
+    out = _STREET_CAPS_RE.sub(_redact_caps_street, out)
     out = _STREET_LOWER_RE.sub(_redact_lower_street, out)
+    out = _LIVES_AT_RE.sub(lambda m: m.group(1) + REDACTED, out)
     for name in names:
-        for token in name.split():
-            token = token.strip(".-'\u2019")
-            if len(token) < 2:
-                continue
+        for token in _name_parts(name):
             if len(token) >= 3 and token.lower() not in _COMMON_WORDS:
                 out = re.sub(
                     rf"(?<!\w){re.escape(token)}(?!\w)", REDACTED, out, flags=re.IGNORECASE
