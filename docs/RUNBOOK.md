@@ -60,6 +60,30 @@ How to run, check, back up and fix the stack. Commands are run from the repo roo
 | `exoapp.local` doesn't resolve | No hosts entry | Add `127.0.0.1 exoapp.local` to `/etc/hosts` (Windows: `C:\Windows\System32\drivers\etc\hosts`) |
 | eXo container killed / restarting | Not enough memory | eXo needs ~4 GB, Elasticsearch ~1.5 GB, ONLYOFFICE ~1.5 GB, MySQL ~0.5 GB. Lower `EXO_JVM_SIZE_MAX` or add RAM. |
 
+## Sending real email (Hostinger)
+
+Locally every email goes to the Mailpit test inbox. To send real email from
+`info@legalleadrouter.com` (a Hostinger Email mailbox), add this to `.env` and run `make up`:
+
+```bash
+ROUTER_SMTP_HOST=smtp.hostinger.com
+ROUTER_SMTP_PORT=465
+ROUTER_SMTP_SSL=true
+ROUTER_SMTP_USERNAME=info@legalleadrouter.com
+ROUTER_SMTP_PASSWORD='the mailbox password'
+```
+
+- If port 465 is blocked where you run it, use `ROUTER_SMTP_PORT=587` with
+  `ROUTER_SMTP_STARTTLS=true` and leave `ROUTER_SMTP_SSL` empty.
+- The sender is `info@legalleadrouter.com` by default, shown under `ROUTER_PLATFORM_NAME`.
+  That name is also written into the consent text, so bump `ROUTER_DISCLOSURE_VERSION`
+  whenever you change it.
+- The password lives only in `.env`, which git ignores. Never commit it.
+- Don't run `make demo` while real SMTP is set: its fictional people use `example.com` and
+  `example.org` addresses, so every demo email would bounce back to the mailbox.
+- Check it works: submit one inquiry from the intake form with your own email address and
+  look for the receipt, then check the dashboard's email queue shows 0 failed.
+
 ## Behind a reverse proxy
 
 The router stores each person's IP address with their consent and limits intake

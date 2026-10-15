@@ -76,10 +76,13 @@ class Settings(BaseSettings):
     # --- Email (SMTP) ---------------------------------------------------------
     smtp_host: str | None = None
     smtp_port: int = 1025
-    smtp_from: str = "Barrgo Leads <leads@barrgo.local>"
+    # The sending mailbox. A bare address gets the platform name as its display name, so
+    # people see the same name in their inbox as in the consent text they agreed to.
+    smtp_from: str = "info@legalleadrouter.com"
     smtp_username: str | None = None
     smtp_password: str | None = None
-    smtp_starttls: bool = False
+    smtp_starttls: bool = False  # port 587 style: connect plain, then upgrade
+    smtp_ssl: bool = False  # port 465 style: encrypted from the start (Hostinger's default)
 
     # --- eXo Platform sync (optional) -----------------------------------------
     # When enabled, every lead is mirrored into the eXo "lead-capture" add-on so

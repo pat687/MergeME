@@ -51,6 +51,7 @@ x-router-env: &router-env
   ROUTER_SMTP_USERNAME: ${ROUTER_SMTP_USERNAME:-}
   ROUTER_SMTP_PASSWORD: ${ROUTER_SMTP_PASSWORD:-}
   ROUTER_SMTP_STARTTLS: ${ROUTER_SMTP_STARTTLS:-}
+  ROUTER_SMTP_SSL: ${ROUTER_SMTP_SSL:-}
   ROUTER_PLATFORM_NAME: ${ROUTER_PLATFORM_NAME:-}
   ROUTER_DISCLOSURE_VERSION: ${ROUTER_DISCLOSURE_VERSION:-}
   # Only these addresses may set X-Forwarded-For (it becomes the consent IP on file).
@@ -156,7 +157,7 @@ services:
       EXO_JVM_SIZE_MAX: ${EXO_JVM_SIZE_MAX:-3g}
       EXO_MAIL_SMTP_HOST: mailpit
       EXO_MAIL_SMTP_PORT: 1025
-      EXO_MAIL_FROM: workspace@barrgo.local
+      EXO_MAIL_FROM: ${EXO_MAIL_FROM:-info@legalleadrouter.com}
       JAVA_OPTS: >-
         -Donlyoffice.documentserver.host=${EXO_PUBLIC_HOST:-${EXO_PROXY_VHOST:-exoapp.local}:${EXO_HTTP_PORT:-80}}
         -Donlyoffice.documentserver.schema=http

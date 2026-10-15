@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import smtplib
 from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
 from typing import Any
 
 from app.config import Settings
@@ -16,14 +17,19 @@ class SmtpMailer:
     def __init__(self, settings: Settings) -> None:
         self.s = settings
 
+    def sender(self) -> str:
+        name, address = parseaddr(self.s.smtp_from)
+        return formataddr((name or self.s.platform_name, address))
+
     def send(self, payload: dict[str, Any]) -> None:
         msg = EmailMessage()
-        msg["From"] = self.s.smtp_from
+        msg["From"] = self.sender()
         msg["To"] = payload["to"]
         msg["Subject"] = payload["subject"]
         msg.set_content(payload["body"])
-        with smtplib.SMTP(self.s.smtp_host, self.s.smtp_port, timeout=5) as smtp:
-            if self.s.smtp_starttls:
+        connect = smtplib.SMTP_SSL if self.s.smtp_ssl else smtplib.SMTP
+        with connect(self.s.smtp_host, self.s.smtp_port, timeout=5) as smtp:
+            if self.s.smtp_starttls and not self.s.smtp_ssl:
                 smtp.starttls()
             if self.s.smtp_username:
                 smtp.login(self.s.smtp_username, self.s.smtp_password or "")
