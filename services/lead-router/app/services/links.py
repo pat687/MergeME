@@ -26,3 +26,22 @@ def offer_link(base_url: str, secret: str, offer_id: str) -> str:
     """The token goes after '#', which browsers never send to the server, so it can't
     end up in access logs. The page reads it and sends it in a header."""
     return f"{base_url.rstrip('/')}/offer/{offer_id}#t={sign_offer(secret, offer_id)}"
+
+
+# The same idea for an attorney's own bid page: one signed link per attorney.
+# A different prefix ("bids:" vs "offer:") means an offer token can never open a bid page.
+# The version is stored on the attorney; sending a new link bumps it, which turns off
+# every earlier link (a forwarded email, a former employee) without touching anyone else.
+def sign_bids(secret: str, attorney_id: int, version: int) -> str:
+    message = f"bids:{attorney_id}:{version}".encode()
+    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()[:32]
+
+
+def verify_bids(secret: str, attorney_id: int, version: int, token: str) -> bool:
+    expected = sign_bids(secret, attorney_id, version).encode()
+    return hmac.compare_digest(expected, (token or "").encode("utf-8", "replace"))
+
+
+def bids_link(base_url: str, secret: str, attorney_id: int, version: int) -> str:
+    token = sign_bids(secret, attorney_id, version)
+    return f"{base_url.rstrip('/')}/bids/{attorney_id}#t={token}"

@@ -57,6 +57,7 @@ def exo_settings() -> Settings:
         exo_leadcapture_token="capture-token",
         exo_username="router-bot",
         exo_password="pw",
+        demo_mode=True,
     )
 
 
@@ -71,17 +72,21 @@ def test_create_lead_sends_token_and_form_payload(client):
     from app.models import Lead
 
     with client.app.state.session_factory() as db:
-        payload = lead_payload(db.get(Lead, lead_id))
+        lead = db.get(Lead, lead_id)
+        payload, full = lead_payload(lead), lead_payload(lead, contact_details=True)
     ExoLeadCaptureClient(exo_settings(), httpx.MockTransport(handler)).create_lead(payload)
 
     req = seen[0]
     assert req.url.path == "/portal/rest/leadcapture/leadsmanagement/leads"
     assert req.headers["token"] == "capture-token"
     body = json.loads(req.content)
-    assert body["lead"]["mail"] == "jamie.rivera@example.org"
     fields = {f["name"]: f["value"] for f in body["response"]["fields"]}
     assert fields["practice_area"] == "personal_injury"
     assert fields["distribution_model"] == "ping_tree"
+    # By default eXo gets nothing personal; the router stays the one copy to erase.
+    assert body["lead"]["mail"] == f"{lead_id}@leads.invalid"
+    assert "Rivera" not in req.content.decode() and "rear-ended" not in req.content.decode()
+    assert full["lead"]["mail"] == "jamie.rivera@example.org"
 
 
 def test_assign_looks_up_the_exo_id_then_patches(client):
@@ -162,7 +167,7 @@ def _mailer(monkeypatch, **overrides):
     monkeypatch.setattr(smtplib, "SMTP", plain)
     monkeypatch.setattr(smtplib, "SMTP_SSL", ssl)
     _SMTP_CONNECTIONS.clear()
-    settings = Settings(_env_file=None, smtp_host="smtp.hostinger.com", **overrides)
+    settings = Settings(_env_file=None, demo_mode=True, smtp_host="smtp.hostinger.com", **overrides)
     SmtpMailer(settings).send({"to": "a@example.org", "subject": "Hi", "body": "Hello"})
     return _SMTP_CONNECTIONS[0]
 

@@ -1,9 +1,10 @@
 """Step 3a: which attorneys are allowed to receive this lead?
 
-An attorney qualifies only if they are active, licensed in the consumer's
-state, handle this practice area, cover this ZIP code and haven't hit their
-daily limit. If someone is skipped we record why, so "why didn't I get that
-lead?" always has an answer.
+An attorney qualifies only if they are active, their bar license was checked
+recently (and they accepted the current participation agreement, once there is
+one), they are licensed in the consumer's state, handle this practice area,
+cover this ZIP code and haven't hit their daily limit. If someone is skipped we
+record why, so "why didn't I get that lead?" always has an answer.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ class Candidate:
     plan: str
     daily_cap: int
     accepted_today: int
+    # Set by the caller from the license check and agreement (offers.credentials_problem).
+    credentials_problem: str | None = None
 
     def bid_for(self, practice_area: str) -> int:
         return self.bids_cents.get(practice_area, 0)
@@ -39,6 +42,8 @@ def ineligibility_reason(
 ) -> str | None:
     if not c.active:
         return "inactive"
+    if c.credentials_problem:
+        return c.credentials_problem
     if state not in c.bar_states:
         return f"not licensed in {state}"
     if practice_area not in c.bids_cents:

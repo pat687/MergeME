@@ -218,18 +218,49 @@ sequenceDiagram
 sequenceDiagram
     participant R as Router
     participant W as Worker
-    participant A as Avery ($95)
-    participant J as Jordan ($80)
-    participant S as Sam ($70)
-    Note over R: line-up by bid: Avery(pending) Jordan(queued) Sam(queued)
+    participant A as Avery (bid $95)
+    participant J as Jordan (bid $80)
+    participant S as Sam (bid $70)
+    Note over R: line-up by bid, market prices: Avery $81, Jordan $71, Sam $50 (floor)
     R->>A: offer email (no contact info), 90s
     A->>R: decline
     R->>J: activate round 2, offer email, 90s
     Note over J: no answer
     W->>R: expire_due(now): round 2 expired
     R->>S: activate round 3 (skipped if inactive or capped)
-    S->>R: accept -> assigned, charged $70
+    S->>R: accept -> assigned, charged $50
 ```
+
+**The market sets the price.** With `ROUTER_AUCTION_PRICING=second_price` (the default)
+each attorney's price is one increment (`ROUTER_BID_INCREMENT_CENTS`, $1) above the next bid
+in line, or the floor if nobody is behind them, and never more than their own bid
+(`distribution.market_price`). This is the second-price rule ad auctions use: an attorney
+never pays more than their own bid, and usually less, so bidding what a lead is worth to
+them is safe. Prices, and the one-line note explaining them (`offers.price_note`), are fixed
+on each offer when the line-up is made, so a later settings change can't rewrite an old
+offer's explanation.
+
+Rules that keep the auction honest:
+
+* **A floor in every practice area.** `ROUTER_FLOOR_PRICE_CENTS` is the lowest bid accepted
+  everywhere, including set-price (shared) areas where the bid *is* the price, and it is
+  what the last bidder in line pays. Startup fails if any area would have a $0 floor.
+* **Subscribers don't bid.** Their leads are included in a flat monthly fee, so a bid would
+  cost them nothing. In auctions they're asked after every paying bidder and their bids
+  never set anyone's price; the bid page is read-only for them.
+* **Other attorneys' bids aren't shown.** The bid page (`/bids/{id}`, `app/api/bids.py`)
+  shows an attorney's place in line, a bid that would put them first rounded up to a whole
+  $10, and a 30-day average price rounded to $10 once at least 5 leads sold
+  (`market.bid_board`). A place in line still answers "is my bid above theirs?", so someone
+  who keeps changing their own bid could home in on a rival's. Saves are therefore limited
+  (`ROUTER_MAX_BID_SAVES_PER_DAY`, default 10) and every save is recorded with before and
+  after amounts (`bid_changes`, `GET /api/v1/admin/bid-changes`), which makes probing slow
+  and visible. The leader never pays more than their own bid either way.
+* **Shared areas** ask attorneys with the fewest leads today first; among equals, attorneys
+  paying per lead (higher price first) go ahead of subscribers, whose stored number is
+  never used to rank them.
+* **Staff edits follow the same floor.** The admin API refuses a pay-per-lead price below
+  the floor, and the market panel flags any left below a floor that was raised later.
 
 Every bidder above the floor joins the line, but no more attorneys are *asked*
 (`activated_at` set) than the person agreed to. That number is stored on the lead with
@@ -315,7 +346,11 @@ for building eXo with the add-on and the version-matching caveat.
 | Admin API | `X-Admin-Key` header, compared in constant time (`hmac.compare_digest`) |
 | Attorney actions | HMAC-SHA256 signed links; nothing stored; invalid or non-ASCII token → 404, the same as a missing offer |
 | Token in logs | The token sits after `#` in the link (never sent to the server); the page sends it in an `X-Offer-Token` header, which isn't logged |
+| Bid links | One signed link per attorney (`bids:{id}:{version}`, sent in an `X-Attorney-Token` header). Sending a new link bumps `attorneys.bids_link_version`, which turns off every earlier link; links also stop working when the attorney is deactivated. Bid links are only in the bid-link email, never in offer emails, which tend to be forwarded |
 | Consumer PII | Name, phone and email withheld until accepted; the description is redacted (names, phones, emails, street addresses) in previews and offer emails |
+| Data minimization | Inquiries from states or practice areas that aren't open are refused before anything is stored; injury questions only in injury areas; eXo gets no contact details unless `ROUTER_EXO_SYNC_CONTACT_DETAILS=true` |
+| Erasure and retention | `services/privacy.py`: erase a lead at two levels (its story and health details, then contact details), scrubbing email copies too; the worker applies `ROUTER_RETENTION_*` every 10 minutes; a legal hold stops both |
+| Production checks | With `ROUTER_DEMO_MODE=false` startup fails on an http public URL, the Mailpit inbox, license checks off, or no legal entity name and address |
 | XSS | Pages build DOM with `textContent` only; no `innerHTML` with user data |
 | Bots and abuse | Honeypot field, link-spam and disposable-domain checks, names limited to letters with no domain-like periods, receipts that contain no submitted text, per-IP intake rate limit |
 | Consent IP | Uvicorn honors `X-Forwarded-For` only from `FORWARDED_ALLOW_IPS` (`ROUTER_TRUSTED_PROXY_IPS`, default 127.0.0.1; through a published Docker port the router sees the network gateway instead, see the RUNBOOK); the stored value must parse as an IP |
