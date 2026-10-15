@@ -90,6 +90,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   outline-offset: 1px;
 }
 .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+fieldset.radios { margin: 8px 0; }
+fieldset.radios legend { font-weight: 400; font-size: 14px; margin-bottom: 4px; }
+.page-footer { margin: 16px 0; }
+.policy h2 { font-size: 17px; margin: 20px 0 6px; }
+.policy li { margin: 4px 0; }
 
 button {
   border: 1px solid transparent;

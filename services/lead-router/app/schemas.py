@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -22,6 +22,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.domain import compliance
 from app.domain.types import (
     BillingPlan,
     ChargeKind,
@@ -176,16 +177,35 @@ class IntakeRequest(BaseModel):
     court_date_soon: bool = False
     consent: bool = Field(description="Agreed to be contacted by participating attorneys")
     consent_version: str = Field(min_length=1, max_length=40)
+    sensitive_consent: bool = Field(
+        default=False,
+        description="Separate consent to send health or immigration details; required in "
+        "personal injury, medical malpractice, workers' comp and immigration",
+    )
+    federal_or_maritime_worker: bool | None = Field(
+        default=None,
+        description="Workers' comp only, required there: a federal employee or a longshore, "
+        "harbor or shipyard worker (those claims aren't accepted)",
+    )
     # Honeypot: hidden from humans by CSS. Bots fill every field, people don't.
     website: str = ""
+    # Where the inquiry came from, kept as evidence that it came from advertising the
+    # person responded to (never from outreach to them). Cleaned and trimmed, never rejected.
     utm_source: str | None = Field(default=None, description=f"Trimmed to {UTM_MAX} characters")
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    utm_content: str | None = None
+    referrer_host: str | None = None
+    landing_path: str | None = None
 
     @field_validator("first_name", "last_name")
     @classmethod
     def _names(cls, value: str) -> str:
         return _check_name(value)
 
-    @field_validator("utm_source")
+    @field_validator(
+        "utm_source", "utm_medium", "utm_campaign", "utm_content", "referrer_host", "landing_path"
+    )
     @classmethod
     def _trim_utm(cls, value: str | None) -> str | None:
         # Marketing tags come from links we don't control: clean and trim, never reject
@@ -229,9 +249,28 @@ class IntakeRequest(BaseModel):
     def _lower_email(cls, value: str) -> str:
         return value.lower()
 
+    @model_validator(mode="after")
+    def _fit_the_practice_area(self) -> IntakeRequest:
+        # Ask only what the matter needs: injury questions only in injury areas.
+        if self.practice_area not in compliance.INJURY_AREAS:
+            self.injured = self.medical_treatment = None
+        if self.practice_area != PracticeArea.WORKERS_COMP:
+            self.federal_or_maritime_worker = None
+        elif self.federal_or_maritime_worker is None:
+            raise ValueError(
+                "please say whether you are a federal employee or a longshore, harbor or "
+                "shipyard worker"
+            )
+        # Refused here, before anything is stored: health or immigration details may only
+        # be collected with this separate consent.
+        if self.practice_area in compliance.SENSITIVE_AREAS and not self.sensitive_consent:
+            kind = compliance.SENSITIVE_AREAS[self.practice_area]
+            raise ValueError(f"please agree to sending the {kind} details, or we can't help")
+        return self
+
 
 class IntakeResponse(BaseModel):
-    lead_id: str
+    lead_id: str | None = Field(description="Empty when nothing was kept (closed state)")
     status: LeadStatus
     message: str
     disclosure: str
@@ -321,6 +360,10 @@ class AttorneyOut(AttorneyBase):
 
     id: int
     created_at: datetime
+    license_numbers: dict[str, str] | None = None
+    license_verified_at: datetime | None = None
+    agreement_version: str | None = None
+    agreement_accepted_at: datetime | None = None
 
 
 class TerritoryCreate(BaseModel):
@@ -509,6 +552,43 @@ class BidsUpdate(BaseModel):
 class BidLinkOut(BaseModel):
     sent_to: str
     link: str | None = Field(default=None, description="Shown only in demo mode")
+
+
+class LicenseCheckIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    license_numbers: dict[str, str] = Field(
+        min_length=1,
+        description='Bar number per state, as shown on the state bar site: {"IL": "6301234"}',
+    )
+
+
+class AgreementIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = Field(min_length=1, max_length=40)
+    accepted_at: datetime | None = Field(default=None, description="Defaults to now")
+
+    @field_validator("accepted_at")
+    @classmethod
+    def _aware(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("include a time zone, e.g. 2026-10-15T14:00:00Z")
+        return value
+
+
+class EraseIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    level: Literal["narrative", "full"] = "narrative"
+    reason: str = Field(min_length=3, max_length=200, description='e.g. "deletion request #12"')
+
+
+class HoldIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    on: bool
+    reason: str = Field(min_length=3, max_length=200)
 
 
 class BidChangeOut(BaseModel):

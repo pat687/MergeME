@@ -34,6 +34,7 @@ from app.services import audit, emails, exo_sync, market, offers, outbox
 class RequestMeta:
     ip_address: str | None = None
     user_agent: str | None = None
+    gpc: bool | None = None  # the browser sent Sec-GPC: 1
 
 
 def _lock_key(value: str) -> int:
@@ -79,8 +80,11 @@ def _is_duplicate(db: Session, lead: Lead, now: datetime, window_days: int) -> b
     )
 
 
-def _snapshot(attorney: Attorney, accepted_today: dict[int, int]) -> Candidate:
+def _snapshot(
+    settings: Settings, attorney: Attorney, accepted_today: dict[int, int], now: datetime
+) -> Candidate:
     return Candidate(
+        credentials_problem=offers.credentials_problem(settings, attorney, now),
         attorney_id=attorney.id,
         name=attorney.name,
         active=attorney.active,
@@ -110,7 +114,7 @@ def _plan(
         )
     counts = offers.accepted_today(db, settings, now)
     # Fine at hundreds of attorneys. At larger scale, pre-filter by state/ZIP in SQL.
-    candidates = [_snapshot(a, counts) for a in db.scalars(select(Attorney)).all()]
+    candidates = [_snapshot(settings, a, counts, now) for a in db.scalars(select(Attorney)).all()]
     owner = next(
         (c for c in candidates if territory and c.attorney_id == territory.attorney_id), None
     )
@@ -128,19 +132,43 @@ def _plan(
     )
 
 
+def refusal(settings: Settings, inquiry: IntakeRequest) -> str | None:
+    """Inquiries we can't accept at all, decided before anything is stored: a state or
+    practice area that isn't open (settings.closed_reason), or a federal or maritime
+    workers' comp claim. Returns the compliance.consumer_message key, or None."""
+    if settings.closed_reason(inquiry.state, inquiry.practice_area):
+        return "closed"
+    if inquiry.federal_or_maritime_worker:
+        return "federal_worker"
+    return None
+
+
 def process_intake(
     db: Session, settings: Settings, inquiry: IntakeRequest, meta: RequestMeta, now: datetime
 ) -> Lead:
+    if refusal(settings, inquiry):
+        raise ValueError("refused inquiries must not be stored; check pipeline.refusal first")
     # 1) Capture -----------------------------------------------------------
     lead = Lead(
         created_at=now,
         status=LeadStatus.RECEIVED,
         consent_at=now,
-        consent_text=compliance.consent_text(settings.platform_name, settings.shared_max_attorneys),
+        # The number is written into the consent, as the form showed it.
+        consent_text=compliance.consent_text(
+            settings.platform_name, settings.shared_max_attorneys, inquiry.phone
+        ),
+        sensitive_consent_text=(
+            compliance.sensitive_consent_text(settings.platform_name, inquiry.practice_area)
+            if inquiry.sensitive_consent
+            else None
+        ),
         max_attorneys=settings.shared_max_attorneys,
         ip_address=meta.ip_address,
         user_agent=(meta.user_agent or "")[:300] or None,
-        **inquiry.model_dump(exclude={"website"}),
+        gpc=meta.gpc,
+        **inquiry.model_dump(
+            exclude={"website", "sensitive_consent", "federal_or_maritime_worker"}
+        ),
     )
     db.add(lead)
     db.flush()
@@ -188,7 +216,11 @@ def process_intake(
 
     lead.distribution_model = plan.model
     if settings.exo_sync_enabled:
-        outbox.enqueue(db, "exo.create_lead", exo_sync.lead_payload(lead))
+        outbox.enqueue(
+            db,
+            "exo.create_lead",
+            exo_sync.lead_payload(lead, settings.exo_sync_contact_details),
+        )
 
     created = _create_offers(db, settings, lead, plan, now)
 

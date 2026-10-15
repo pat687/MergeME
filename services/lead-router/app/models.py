@@ -55,6 +55,12 @@ class Attorney(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Bumped each time a bid link is sent; only the newest link works (services/links.py).
     bids_link_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Staff checked the attorney's bar license(s) on the state bar's site: {"IL": "6301234"}.
+    license_numbers: Mapped[dict[str, str] | None] = mapped_column(JSONField)
+    license_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # The participation agreement version the attorney accepted, and when.
+    agreement_version: Mapped[str | None] = mapped_column(String(40))
+    agreement_accepted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     territories: Mapped[list[Territory]] = relationship(back_populates="attorney")
@@ -120,6 +126,21 @@ class Lead(Base):
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(String(300))
     utm_source: Mapped[str | None] = mapped_column(String(120))
+    utm_medium: Mapped[str | None] = mapped_column(String(120))
+    utm_campaign: Mapped[str | None] = mapped_column(String(120))
+    utm_content: Mapped[str | None] = mapped_column(String(120))
+    referrer_host: Mapped[str | None] = mapped_column(String(120))
+    landing_path: Mapped[str | None] = mapped_column(String(120))
+    # The separate consent for health or immigration details, word for word, if needed.
+    sensitive_consent_text: Mapped[str | None] = mapped_column(Text)
+    # The browser sent a Global Privacy Control signal ("don't sell or share my data").
+    gpc: Mapped[bool | None] = mapped_column(Boolean)
+
+    # Records: legal holds stop every erase; erased_at / narrative_erased_at say what's gone.
+    legal_hold: Mapped[bool | None] = mapped_column(Boolean)
+    legal_hold_reason: Mapped[str | None] = mapped_column(String(200))
+    narrative_erased_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    erased_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     # What the system decided
     status: Mapped[str] = mapped_column(String(20), index=True)

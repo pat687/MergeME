@@ -132,7 +132,8 @@ async function newFamilyLead() {
   const messages = (await page.$$eval(".field-error", (els) => els.map((e) => e.textContent))).join(" ");
   const invalid = await page.$$eval("[aria-invalid=true]", (els) => els.length);
   const focused = await page.evaluate(() => document.activeElement?.name);
-  check("intake shows friendly field errors", invalid >= 5 && focused === "first_name" && !/Value error|Input should/.test(messages),
+  // State and matter type come first, so the first field to fix is the ZIP code.
+  check("intake shows friendly field errors", invalid >= 5 && focused === "zip_code" && !/Value error|Input should/.test(messages),
     JSON.stringify({ invalid, focused }));
   // The specific reason is shown when our own check has one, and read once (as the
   // field's description, not also as part of its label).
@@ -147,6 +148,51 @@ async function newFamilyLead() {
   check("name errors give the real reason, read once",
     /period must be followed by a space/.test(nameError.text) && nameError.hidden === "true"
       && nameError.described.includes("error_first_name"), JSON.stringify(nameError));
+
+  // Intake form: says up front when a state or matter isn't accepted (before anyone
+  // types details), asks injury questions and the separate health consent only where
+  // they apply, and writes the typed phone number into the consent.
+  page = await open({ viewport: { width: 390, height: 844 } });
+  await page.goto(`${BASE}/`);
+  await page.waitForSelector("#submit:not([disabled])");
+  await page.fill("[name=state]", "WA");
+  await page.selectOption("#practice_area", "personal_injury");
+  const closedForm = await page.evaluate(() => ({
+    notice: document.getElementById("availability").textContent,
+    detailsHidden: document.getElementById("details").hidden,
+    submitDisabled: document.getElementById("submit").disabled,
+  }));
+  await page.fill("[name=state]", "IL");
+  const injuryForm = await page.evaluate(() => ({
+    detailsHidden: document.getElementById("details").hidden,
+    injury: !document.getElementById("injury_questions").hidden,
+    sensitive: !document.getElementById("sensitive_wrap").hidden,
+  }));
+  await page.selectOption("#practice_area", "family_law");
+  const familyForm = await page.evaluate(() => ({
+    injury: !document.getElementById("injury_questions").hidden,
+    sensitive: !document.getElementById("sensitive_wrap").hidden,
+  }));
+  await page.fill("[name=phone]", "312 555 0199");
+  const consentShown = await page.textContent("#consent_text");
+  check("intake says which states and matters it can't take, before details are typed",
+    /aren't accepting inquiries from WA/.test(closedForm.notice) && closedForm.detailsHidden
+      && closedForm.submitDisabled && !injuryForm.detailsHidden,
+    JSON.stringify(closedForm));
+  check("injury questions and the health consent appear only for injury matters; consent names the number",
+    injuryForm.injury && injuryForm.sensitive && !familyForm.injury && !familyForm.sensitive
+      && consentShown.includes("(312) 555-0199"),
+    JSON.stringify({ injuryForm, familyForm, consentShown: consentShown.slice(0, 160) }));
+
+  page = await open();
+  await page.goto(`${BASE}/privacy`);
+  await page.waitForFunction(() => document.querySelector("[data-fill=rejected]")?.textContent);
+  const policy = await page.evaluate(() => ({
+    rejected: document.querySelector("[data-fill=rejected]").textContent,
+    email: document.querySelector("[data-fill=privacy_link]").textContent,
+  }));
+  check("privacy policy fills in the real retention periods and contact", policy.rejected === "30"
+    && policy.email.includes("@"), JSON.stringify(policy));
 
   // Intake form: Enter before the form's settings load must not submit natively
   // (that would put the person's details in the page URL).
@@ -242,6 +288,10 @@ async function newFamilyLead() {
       service_zips: ["606"], bids_cents: { personal_injury: 7000 },
     }),
   })).json();
+  await fetch(`${BASE}/api/v1/admin/attorneys/${bidder.id}/license-check`, {  // as at onboarding
+    method: "POST", headers: { "X-Admin-Key": KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ license_numbers: { IL: "TEST" } }),
+  });
   const bidLink = (await (await fetch(`${BASE}/api/v1/admin/attorneys/${bidder.id}/bid-link`,
     { method: "POST", headers: { "X-Admin-Key": KEY } })).json()).link;
   page = await open({ viewport: { width: 390, height: 900 } });

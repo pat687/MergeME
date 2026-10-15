@@ -32,7 +32,7 @@ from app.config import Settings
 from app.domain.types import DistributionModel, LeadStatus, OfferStatus
 from app.models import Attorney, Lead, Offer
 from app.schemas import OfferView
-from app.services import audit, billing, emails, links, outbox
+from app.services import audit, billing, emails, exo_sync, links, outbox
 
 
 class OfferError(Exception):
@@ -73,12 +73,28 @@ def accepted_today(
     return {attorney: count for attorney, count in db.execute(stmt).all()}
 
 
+def credentials_problem(settings: Settings, attorney: Attorney, now: datetime) -> str | None:
+    """A recent bar-license check, and the current participation agreement if there is one.
+    Checked when the line-up is made, when each attorney's turn comes, and at acceptance."""
+    if settings.require_license_verification and (
+        attorney.license_verified_at is None
+        or attorney.license_verified_at < now - timedelta(days=settings.license_recheck_days)
+    ):
+        return "bar license not checked recently"
+    wanted = settings.attorney_agreement_version
+    if wanted and attorney.agreement_version != wanted:
+        return "hasn't accepted the current participation agreement"
+    return None
+
+
 def unavailable_reason(
     db: Session, settings: Settings, attorney: Attorney, now: datetime
 ) -> str | None:
     """Re-checked at the moment of acceptance, not just when the offer was made."""
     if not attorney.active:
         return "inactive"
+    if problem := credentials_problem(settings, attorney, now):
+        return problem
     taken = accepted_today(db, settings, now, attorney.id).get(attorney.id, 0)
     if taken >= attorney.daily_cap:
         return "daily lead cap reached"
@@ -101,10 +117,12 @@ def finalize_assignment(
     attorney = db.get(Attorney, offer.attorney_id)
     billing.charge_for_delivery(db, offer, lead, now)
     outbox.enqueue(db, "email", emails.delivered_email(settings, lead, offer, attorney))
+    # The person is told who has their details, so they can check the attorney's license,
+    # tell them to stop, or ask us to delete their information.
+    outbox.enqueue(db, "email", emails.consumer_assigned(settings, lead, attorney))
     if settings.exo_sync_enabled and attorney.exo_username:
-        outbox.enqueue(
-            db, "exo.assign_lead", {"email": lead.email, "assignee": attorney.exo_username}
-        )
+        email = exo_sync.exo_email(lead, settings.exo_sync_contact_details)
+        outbox.enqueue(db, "exo.assign_lead", {"email": email, "assignee": attorney.exo_username})
     audit.record(
         db,
         lead.id,
@@ -202,6 +220,8 @@ def advance(db: Session, settings: Settings, lead: Lead, now: datetime) -> None:
             # Things may have changed since the line-up was made.
             if not attorney.active:
                 reason = "inactive"
+            elif problem := credentials_problem(settings, attorney, now):
+                reason = problem
             elif counts.get(attorney.id, 0) >= attorney.daily_cap:
                 reason = "daily lead cap reached"
             else:

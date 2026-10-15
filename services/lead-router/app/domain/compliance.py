@@ -148,22 +148,189 @@ def redact(
     return out
 
 
-def disclosure(platform_name: str) -> str:
+def disclosure(platform_name: str, operator: str | None = None) -> str:
+    """Shown above the form and in the receipt email. Changing it means bumping
+    ROUTER_DISCLOSURE_VERSION (docs/COMPLIANCE.md, "Changing the wording safely")."""
+    text = (
+        f"Attorney advertising. {platform_name} is an advertising service paid for by "
+        "participating attorneys. It is not a law firm, does not give legal advice, and no "
+        f"one at {platform_name} reviews your matter. We send your inquiry only to "
+        "participating attorneys who are licensed in your state, handle the type of matter "
+        "you chose and serve your ZIP code. When more than one qualifies, attorneys who have "
+        "had fewer inquiries that day or who pay more per inquiry may be offered it first, "
+        "and in some areas one attorney pays a monthly fee to receive every inquiry for a "
+        "ZIP code. Attorneys pay us per inquiry or monthly. The amount never depends on "
+        "whether you hire them or how your matter turns out, and it is never a share of a "
+        "legal fee. We do not recommend or endorse any attorney. Submitting this form does "
+        "not create an attorney-client relationship, and an attorney who sees your inquiry "
+        "may already represent someone else in your matter."
+    )
+    return f"{text} {platform_name} is operated by {operator}." if operator else text
+
+
+# Shown on the form until a valid phone number is typed, then replaced by that number,
+# which is also what the stored consent says.
+PHONE_PLACEHOLDER = "the phone number I entered"
+
+
+def phone_display(digits: str) -> str:
+    return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+
+
+def consent_text(platform_name: str, max_attorneys: int, phone: str | None = None) -> str:
+    """The consumer's instruction and permission to be contacted. Written as a request
+    ("Please send my inquiry...") because the consumer is directing the disclosure."""
+    number = phone_display(phone) if phone else PHONE_PLACEHOLDER
     return (
-        f"Attorney advertising. {platform_name} is not a law firm and does not give legal "
-        "advice. Participating attorneys pay a flat fee to receive inquiries like yours. "
-        "We do not recommend or endorse any attorney, and we have not evaluated your legal "
-        "matter. Submitting this form does not create an attorney-client relationship."
+        f"Please send my inquiry to up to {max_attorneys} participating attorneys who "
+        f"handle this type of matter in my area. I understand {platform_name} is paid by "
+        "those attorneys. I agree that they may contact me about my inquiry by phone call or "
+        f"text message to {number}, including with automated technology, and by email. I am "
+        "18 or older, and the phone number and email I entered are mine or ones I regularly "
+        "use. My consent is not a condition of buying anything. Message and data rates may "
+        "apply. I can stop contact at any time by telling the attorney or replying STOP to "
+        "a text."
     )
 
 
-def consent_text(platform_name: str, max_attorneys: int) -> str:
-    return (
-        f"I agree that {platform_name} may share my inquiry with up to {max_attorneys} "
-        "participating attorneys, and that those attorneys may contact me by phone, text or "
-        "email about my inquiry, including by automated means. Consent is not a condition "
-        "of any purchase. Message and data rates may apply."
-    )
+# Practice areas whose inquiries carry health or immigration information. Those need a
+# separate, specific consent under several state privacy laws (docs/COMPLIANCE.md).
+SENSITIVE_AREAS = {
+    "personal_injury": "health",
+    "medical_malpractice": "health",
+    "workers_comp": "health",
+    "immigration": "immigration",
+}
+INJURY_AREAS = frozenset(a for a, kind in SENSITIVE_AREAS.items() if kind == "health")
+
+
+def sensitive_consent_text(platform_name: str, practice_area: str) -> str | None:
+    kind = SENSITIVE_AREAS.get(practice_area)
+    if kind == "health":
+        return (
+            f"I agree that {platform_name} may collect the health information I give on this "
+            "form, such as an injury or medical treatment, and send it, for a fee paid by the "
+            "attorneys, to the participating attorneys described above so they can contact me "
+            "about my matter."
+        )
+    if kind == "immigration":
+        return (
+            f"I agree that {platform_name} may collect the information about my immigration "
+            "matter that I give on this form and send it, for a fee paid by the attorneys, to "
+            "the participating attorneys described above so they can contact me about it."
+        )
+    return None
+
+
+def area_notices(platform_name: str) -> dict[str, str]:
+    """Extra statements shown when a practice area is chosen."""
+    return {
+        "immigration": (
+            f"No one at {platform_name} is an attorney or an accredited representative. We "
+            "can't help with immigration forms or give advice; we only pass your inquiry to "
+            "participating attorneys."
+        ),
+        # The 11 U.S.C. 528 statement, for the participating attorneys.
+        "bankruptcy": (
+            "Participating attorneys are debt relief agencies. They help people file for "
+            "bankruptcy relief under the Bankruptcy Code."
+        ),
+        "workers_comp": (
+            "Claims by federal government employees and by longshore, harbor or shipyard "
+            "workers follow federal programs, so we can't accept them here."
+        ),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Where leads may be sold
+# --------------------------------------------------------------------------- #
+# Known reasons a state, or a practice area in a state, needs a lawyer's written approval
+# before leads are sold there. From a 2026-10 legal audit whose sources could not be
+# checked against the official texts, so treat each line as a question for counsel, not
+# an answer. Leads covered here are never sold unless ROUTER_COUNSEL_CLEARED lists
+# "ST" (the whole state) or "ST:practice_area". docs/legal/COUNSEL_BRIEF.md has the detail.
+_INJURY = ("personal_injury", "medical_malpractice", "workers_comp")
+RESTRICTIONS: dict[str, dict[str, str]] = {
+    "CA": {
+        "*": "lawyer referral services must be certified by the State Bar (Bus. & Prof. "
+        "Code 6155; Jackson v. LegalMatch.com); SB 37 (2025); workers' comp and "
+        "insurance anti-referral laws (Lab. Code 3215, Ins. Code 750)"
+    },
+    "TX": {
+        "*": "barratry (Penal Code 38.12); for-profit referral services can't be certified "
+        "(Occ. Code ch. 952); per-lead pricing outside Ethics Op. 573"
+    },
+    "CO": {"*": "SB26-174 (2026) makes paying for legal leads a deceptive trade practice"},
+    "MI": {"*": "per-lead fees treated as paying for a recommendation (Informal Op. RI-365)"},
+    "OH": {
+        "*": "referral services must be nonprofit or registered (Gov.Bar R. XVI; Adv. Op. 2016-3)"
+    },
+    "FL": {
+        "*": "'qualifying provider' filings and conditions (Rule 4-7.22); Fla. Stat. "
+        "877.02 and 440.105"
+    },
+    "LA": {"*": "criminal ban on paying to obtain representation (La. R.S. 37:219)"},
+    "GA": {"*": "referral-service filing rules (Ga. RPC 7.3(c)), amended March 2026"},
+    "NJ": {
+        "*": "for-profit referral services barred (RPC 7.3(d)); per-lead pricing "
+        "scrutiny (CAA Op. 43; Joint Op. 47/741)"
+    },
+    "KY": {"*": "for-profit referral services barred by older opinions (KBA E-313, E-334, E-344)"},
+    "SC": {"*": "services that limit which lawyers can join may violate Rule 7.2(c) (EAO 01-03)"},
+    "IL": dict.fromkeys(_INJURY, "Insurance Claims Fraud Prevention Act (740 ILCS 92/5)"),
+    "PA": dict.fromkeys(_INJURY, "paying for referrals of insurance claims (18 Pa.C.S. 4117(b))"),
+    "WA": dict.fromkeys(
+        _INJURY,
+        "selling consumer health data needs a signed authorization "
+        "naming the buyer (My Health My Data Act, RCW 19.373.070)",
+    ),
+    "NV": dict.fromkeys(
+        _INJURY, "selling consumer health data needs written authorization (SB 370, NRS 603A)"
+    ),
+    "CT": dict.fromkeys(
+        (*_INJURY, "immigration"),
+        "consent rules for selling sensitive and consumer health data (CTDPA)",
+    ),
+    "MD": dict.fromkeys(
+        (*_INJURY, "immigration"),
+        "selling sensitive data is banned (Maryland Online Data Privacy Act)",
+    ),
+    "NC": {"workers_comp": "workers' comp solicitation and fee rules (N.C.G.S. 97-90)"},
+    "DC": {"workers_comp": "workers' comp solicitation ban (D.C. Code 32-1530(e))"},
+}
+
+
+def restriction(state: str, practice_area: str, cleared: Iterable[str]) -> str | None:
+    """Why leads for this state and area need counsel's approval, unless it's recorded."""
+    cleared = set(cleared)
+    rules = RESTRICTIONS.get(state, {})
+    if "*" in rules and state not in cleared:
+        return rules["*"]
+    if (
+        practice_area in rules
+        and state not in cleared
+        and (f"{state}:{practice_area}" not in cleared)
+    ):
+        return rules[practice_area]
+    return None
+
+
+def closed_reason(
+    state: str,
+    practice_area: str,
+    *,
+    launch_states: Iterable[str],
+    cleared: Iterable[str],
+    blocked: dict[str, list[str]],
+) -> str | None:
+    """Why an inquiry from this state in this practice area can't be accepted, or None."""
+    if state not in set(launch_states):
+        return "not open in this state"
+    off = blocked.get(state, [])
+    if "*" in off or practice_area in off:
+        return "turned off for this state"
+    return restriction(state, practice_area, cleared)
 
 
 def assert_flat_fee(kind: ChargeKind | str, amount_cents: int) -> None:
@@ -205,6 +372,18 @@ def consumer_message(status: str, platform_name: str, reasons: Iterable[str] = (
             "Thanks. Right now no participating attorney covers this kind of matter in your "
             "area. Your state or local bar association runs a lawyer referral service that "
             "can help."
+        ),
+        "closed": (
+            "Sorry, we can't accept this type of inquiry from your state, so we didn't keep "
+            "what you entered. Your state or local bar association runs a lawyer referral "
+            "service that can help."
+        ),
+        "federal_worker": (
+            "Sorry, we can't accept this inquiry, so we didn't keep what you entered. Claims "
+            "by federal employees and by longshore, harbor or shipyard workers follow federal "
+            "programs: the U.S. Department of Labor's Office of Workers' Compensation "
+            "Programs (dol.gov/owcp) and your state or local bar association's lawyer "
+            "referral service can help."
         ),
         "rejected": (
             "We couldn't accept this submission. Please check your details and try again, or "

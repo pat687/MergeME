@@ -76,6 +76,19 @@ Consent: the consumer agreed to be contacted (form version {lead.consent_version
     }
 
 
+def _privacy_footer(settings: Settings) -> str:
+    base = settings.public_base_url.rstrip("/")
+    who = (
+        f"{settings.platform_name} ({settings.operator})"
+        if settings.operator
+        else (settings.platform_name)
+    )
+    return (
+        f"{who}. Privacy policy: {base}/privacy. To ask what we hold about you, or to have it "
+        f"deleted, email {settings.privacy_email} with your reference number."
+    )
+
+
 def consumer_receipt(settings: Settings, lead: Lead) -> dict[str, Any]:
     # No user-supplied text in this email: it goes to whatever address was typed in,
     # so it must never be usable to send someone else a message from our domain.
@@ -85,11 +98,63 @@ def consumer_receipt(settings: Settings, lead: Lead) -> dict[str, Any]:
 
 Reference number: {lead.id[:8].upper()}
 
-{compliance.disclosure(settings.platform_name)}
+What you agreed to (form version {lead.consent_version}):
+"{lead.consent_text}"
+
+{compliance.disclosure(settings.platform_name, settings.operator)}
+
+{_privacy_footer(settings)}
 """
     return {
         "to": lead.email,
         "subject": f"We received your inquiry - {settings.platform_name}",
+        "body": body,
+    }
+
+
+def consumer_assigned(settings: Settings, lead: Lead, attorney: Attorney) -> dict[str, Any]:
+    """Tells the person who now has their details. Still no text they typed: only our
+    wording and the attorney's details from our own records."""
+    phone = f"\n  Phone:    {attorney.phone}" if attorney.phone else ""
+    body = f"""Hello,
+
+Your inquiry (reference {lead.id[:8].upper()}) was accepted by a participating attorney,
+who now has your name, contact details and description and may contact you:
+
+  Attorney: {attorney.name}
+  Firm:     {attorney.firm}{phone}
+  Email:    {attorney.email}
+
+You don't have to hire them, and {settings.platform_name} does not recommend or vouch for
+any attorney. You can check an attorney's license with your state bar.
+
+To stop contact from this attorney, tell them, or reply STOP to their text messages.
+
+{_privacy_footer(settings)}
+"""
+    return {
+        "to": lead.email,
+        "subject": f"An attorney received your inquiry - {settings.platform_name}",
+        "body": body,
+    }
+
+
+def deletion_request(settings: Settings, lead_ref: str, attorney: Attorney) -> dict[str, Any]:
+    """Sent to each attorney who received a lead when the person asks us to delete it."""
+    body = f"""Hello {attorney.name},
+
+The person behind inquiry {lead_ref}, which you received through {settings.platform_name},
+has asked us to delete their information. We have deleted it from our systems except
+what the law requires us to keep.
+
+Under your participation agreement, please delete it from your systems too, unless you
+now represent this person or must keep it for another legal reason.
+
+{_privacy_footer(settings)}
+"""
+    return {
+        "to": attorney.email,
+        "subject": f"Deletion request for inquiry {lead_ref}",
         "body": body,
     }
 

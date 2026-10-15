@@ -58,6 +58,9 @@ def step(n: int, title: str, why: str) -> None:
     print(f"\n{BOLD}Step {n}. {title}{RESET}\n{DIM}{why}{RESET}")
 
 
+CONSENT_VERSION = ""  # the wording version the form currently shows; read from /api/v1/meta
+
+
 def person(first: str, last: str, **overrides) -> dict:
     data = {
         "first_name": first,
@@ -75,7 +78,9 @@ def person(first: str, last: str, **overrides) -> dict:
         "injured": True,
         "medical_treatment": True,
         "consent": True,
-        "consent_version": "2026-10-01",
+        "consent_version": CONSENT_VERSION,
+        "sensitive_consent": True,  # the separate consent for health or immigration details
+        "federal_or_maritime_worker": False,
     }
     data.update(overrides)
     return data
@@ -114,6 +119,12 @@ def main() -> None:
     names = attorneys()
     if not names:
         sys.exit("No attorneys yet. Run `make seed` first.")
+    global CONSENT_VERSION
+    meta = call("GET", "/api/v1/meta")[1]
+    CONSENT_VERSION = meta["consent_version"]
+    if "personal_injury" not in meta["open"].get("IL", []):
+        sys.exit("Illinois personal injury isn't open: set ROUTER_LAUNCH_STATES and "
+                 "ROUTER_COUNSEL_CLEARED as in .env.example (demo values), then `make up`.")
 
     step(1, "Five people send in the intake form",
          "Each one takes a different path through the system.")

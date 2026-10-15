@@ -23,7 +23,7 @@ from app.domain.types import LeadStatus, OfferStatus
 from app.models import Attorney, Lead, LedgerEntry, Offer
 from app.seed import seed
 from app.services import offers, pipeline
-from tests.conftest import SECRET, inquiry, token
+from tests.conftest import LAUNCH, SECRET, inquiry, token
 
 PG_URL = os.environ.get("TEST_POSTGRES_URL")
 pytestmark = pytest.mark.skipif(not PG_URL, reason="set TEST_POSTGRES_URL to run")
@@ -34,7 +34,11 @@ FAMILY = {"practice_area": "family_law", "injured": None, "medical_treatment": N
 @pytest.fixture
 def pg():
     settings = Settings(
-        _env_file=None, database_url=PG_URL, link_signing_secret=SECRET, embedded_worker=False
+        _env_file=None,
+        database_url=PG_URL,
+        link_signing_secret=SECRET,
+        embedded_worker=False,
+        **LAUNCH,
     )
     engine = make_engine(PG_URL)
     Base.metadata.drop_all(engine)

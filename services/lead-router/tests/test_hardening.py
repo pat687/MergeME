@@ -17,7 +17,7 @@ from app.main import create_app
 from app.models import Lead, LedgerEntry, Offer, OutboxMessage
 from app.seed import seed
 from app.services import emails, offers, outbox
-from tests.conftest import ADMIN, SECRET, inquiry, inquiry_data, token
+from tests.conftest import ADMIN, LAUNCH, SECRET, add_attorney, inquiry, inquiry_data, token
 
 FAMILY = {"practice_area": "family_law", "injured": None, "medical_treatment": None}
 
@@ -109,6 +109,7 @@ def test_stale_advance_cannot_mark_an_assigned_lead_unsold(tmp_path, mailbox):
         admin_api_key="test-admin",
         link_signing_secret=SECRET,
         embedded_worker=False,
+        **LAUNCH,
     )
     app = create_app(settings, handlers={"email": mailbox.append})
     factory = app.state.session_factory
@@ -147,9 +148,9 @@ def test_decline_after_someone_else_won_is_refused(client):
 # --------------------------------------------------------------------------- #
 def test_every_model_respects_the_consented_number_of_attorneys(client, settings):
     for n in range(4):  # make 7 personal-injury bidders in total
-        client.post(
-            "/api/v1/admin/attorneys",
-            json={
+        add_attorney(
+            client,
+            {
                 "name": f"Extra Bidder {n}",
                 "firm": "Example Firm (Demo)",
                 "email": f"extra{n}@example.com",
@@ -157,7 +158,6 @@ def test_every_model_respects_the_consented_number_of_attorneys(client, settings
                 "service_zips": ["606"],
                 "bids_cents": {"personal_injury": 6000 + n},
             },
-            headers=ADMIN,
         )
     assert (
         f"up to {settings.shared_max_attorneys}"
@@ -182,9 +182,9 @@ def test_every_model_respects_the_consented_number_of_attorneys(client, settings
 
 def test_ping_tree_attorney_skipped_while_queued_does_not_use_up_a_place(client, settings):
     for n in range(2):
-        client.post(
-            "/api/v1/admin/attorneys",
-            json={
+        add_attorney(
+            client,
+            {
                 "name": f"Late Bidder {n}",
                 "firm": "Example Firm (Demo)",
                 "email": f"late{n}@example.com",
@@ -192,7 +192,6 @@ def test_ping_tree_attorney_skipped_while_queued_does_not_use_up_a_place(client,
                 "service_zips": ["606"],
                 "bids_cents": {"personal_injury": 6000 + n},
             },
-            headers=ADMIN,
         )
     lead_id = submit(client, 1)["lead_id"]  # line-up: Avery, Jordan, Sam, Late 1, Late 0
     jordan = attorney_id(client, "Jordan Reyes")
@@ -387,6 +386,7 @@ def test_intake_is_rate_limited_per_ip(mailbox):
         database_url="sqlite:///:memory:",
         embedded_worker=False,
         intake_rate_limit_per_minute=2,
+        **LAUNCH,
     )
     from fastapi.testclient import TestClient
 
@@ -541,9 +541,9 @@ def test_long_marketing_tags_are_trimmed_not_rejected(client, db):
 # --------------------------------------------------------------------------- #
 def _bidders(client, n: int) -> None:
     for i in range(n):
-        client.post(
-            "/api/v1/admin/attorneys",
-            json={
+        add_attorney(
+            client,
+            {
                 "name": f"Round4 Bidder {i}",
                 "firm": "Example Firm (Demo)",
                 "email": f"round4.{i}@example.com",
@@ -551,7 +551,6 @@ def _bidders(client, n: int) -> None:
                 "service_zips": ["606"],
                 "bids_cents": {"personal_injury": 6000 + i},
             },
-            headers=ADMIN,
         )
 
 

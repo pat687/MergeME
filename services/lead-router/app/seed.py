@@ -89,7 +89,16 @@ def seed(db: Session) -> bool:
         return False
     by_name: dict[str, Attorney] = {}
     for data in DEMO_ATTORNEYS:
-        attorney = Attorney(daily_cap=10, active=True, created_at=utcnow(), **data)
+        attorney = Attorney(
+            daily_cap=10,
+            active=True,
+            created_at=utcnow(),
+            # Demo attorneys are fictional; a real onboarding records the bar numbers
+            # checked on each state bar's website (POST .../license-check).
+            license_numbers=dict.fromkeys(data["bar_states"], "DEMO"),
+            license_verified_at=utcnow(),
+            **data,
+        )
         db.add(attorney)
         by_name[attorney.name] = attorney
     db.flush()

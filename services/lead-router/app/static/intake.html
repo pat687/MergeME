@@ -17,49 +17,62 @@
 
   <form id="intake" class="card" novalidate>
     <fieldset>
-      <legend>About you</legend>
-      <div class="grid">
-        <label>First name<input name="first_name" autocomplete="given-name" required></label>
-        <label>Last name<input name="last_name" autocomplete="family-name" required></label>
-        <label>Email<input name="email" type="email" autocomplete="email" required></label>
-        <label>Phone<input name="phone" type="tel" autocomplete="tel" placeholder="(312) 555-0142" required></label>
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Where you are</legend>
+      <legend>Where you are and what it's about</legend>
       <div class="grid">
         <label>ZIP code<input name="zip_code" inputmode="numeric" maxlength="10" autocomplete="postal-code" required></label>
-        <label>State<input name="state" maxlength="2" placeholder="IL" required></label>
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Your matter</legend>
-      <div class="grid">
+        <label>State<input name="state" maxlength="2" placeholder="IL" autocomplete="address-level1" required></label>
         <label>Type of legal matter<select name="practice_area" id="practice_area" required></select></label>
-        <label>When did it happen? (optional)<input name="incident_date" type="date"></label>
       </div>
-      <label style="margin-top:12px">What happened?
-        <textarea name="description" minlength="10" maxlength="2000" required aria-describedby="description_hint"
-          placeholder="A few sentences in your own words."></textarea>
-      </label>
-      <p class="small muted" id="description_hint">Attorneys read this before they contact you, so please leave out your name, phone, email, address and any account numbers. We ask for those above.</p>
-      <label class="check"><input type="checkbox" name="injured"> I was injured</label>
-      <label class="check"><input type="checkbox" name="medical_treatment"> I received medical treatment</label>
-      <label class="check"><input type="checkbox" name="court_date_soon"> I have a court date coming up</label>
-      <label class="check"><input type="checkbox" name="has_attorney"> I already have an attorney for this</label>
+      <p class="small" id="area_notice" hidden></p>
+      <p class="small muted" id="responsible" hidden></p>
+      <p class="notice" id="availability" role="status" hidden></p>
     </fieldset>
 
-    <!-- Honeypot: hidden from people, irresistible to bots. -->
-    <div class="hp" aria-hidden="true">
-      <label>Website<input name="website" tabindex="-1" autocomplete="off"></label>
+    <div id="details">
+      <fieldset>
+        <legend>About you</legend>
+        <div class="grid">
+          <label>First name<input name="first_name" autocomplete="given-name" required></label>
+          <label>Last name<input name="last_name" autocomplete="family-name" required></label>
+          <label>Email<input name="email" type="email" autocomplete="email" required></label>
+          <label>Phone<input name="phone" type="tel" autocomplete="tel" placeholder="(312) 555-0142" required></label>
+        </div>
+        <p class="small muted">Use your own contact details. If you're asking for someone else, attorneys will contact you, not them.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Your matter</legend>
+        <label>When did it happen? (optional)<input name="incident_date" type="date"></label>
+        <label style="margin-top:12px">What happened?
+          <textarea name="description" minlength="10" maxlength="2000" required aria-describedby="description_hint"
+            placeholder="A few sentences in your own words."></textarea>
+        </label>
+        <p class="small muted" id="description_hint">Attorneys read this before they contact you, so please leave out your name, phone, email, address and any account numbers (we ask for contact details above). Describe things in general terms: no medical record, Social Security or immigration numbers, and nothing you'd want kept from the other side, because an attorney who sees this may already represent someone else in your matter.</p>
+        <div id="injury_questions" hidden>
+          <label class="check"><input type="checkbox" name="injured"> I was injured</label>
+          <label class="check"><input type="checkbox" name="medical_treatment"> I received medical treatment</label>
+        </div>
+        <fieldset id="federal_question" class="radios" hidden>
+          <legend>Are you a federal government employee, or a longshore, harbor or shipyard worker?</legend>
+          <label class="check"><input type="radio" name="federal_or_maritime_worker" value="no"> No</label>
+          <label class="check"><input type="radio" name="federal_or_maritime_worker" value="yes"> Yes</label>
+        </fieldset>
+        <label class="check"><input type="checkbox" name="court_date_soon"> I have a court date coming up</label>
+        <label class="check"><input type="checkbox" name="has_attorney"> I already have an attorney for this</label>
+      </fieldset>
+
+      <!-- Honeypot: hidden from people, irresistible to bots. -->
+      <div class="hp" aria-hidden="true">
+        <label>Website<input name="website" tabindex="-1" autocomplete="off"></label>
+      </div>
+
+      <fieldset>
+        <legend>Consent</legend>
+        <label class="check"><input type="checkbox" name="consent" required> <span id="consent_text"></span></label>
+        <label class="check" id="sensitive_wrap" hidden><input type="checkbox" name="sensitive_consent"> <span id="sensitive_text"></span></label>
+        <p class="small muted" id="collection_notice">Notice at collection: we collect the details on this form, plus your IP address and browser, to send your inquiry to participating attorneys, who pay us for it, and to keep a record of what you agreed to. See our <a href="/privacy">Privacy Policy</a> for what we collect, who gets it, how long we keep it and your choices.</p>
+      </fieldset>
     </div>
-
-    <fieldset>
-      <legend>Consent</legend>
-      <label class="check"><input type="checkbox" name="consent" required> <span id="consent_text"></span></label>
-    </fieldset>
 
     <p class="error" id="error" role="alert"></p>
     <button type="submit" id="submit" disabled>Send my inquiry</button>
@@ -68,8 +81,10 @@
   <section class="card" id="result" hidden aria-live="polite">
     <h2 style="margin-top:0" tabindex="-1">Thank you</h2>
     <p id="result_message"></p>
-    <p class="small muted">Reference number: <span class="mono" id="result_ref"></span></p>
+    <p class="small muted" id="result_ref_line">Reference number: <span class="mono" id="result_ref"></span></p>
   </section>
+
+  <footer class="small muted page-footer"><a href="/privacy">Privacy Policy</a> <span id="operator"></span></footer>
 </main>
 
 <script type="module">
@@ -84,6 +99,9 @@
   // check explains what's wrong (e.g. "a period must be followed by a space"), that
   // reason is shown instead, so the message never contradicts what the person typed.
   const OWN_REASONS = new Set(["first_name", "last_name", "phone", "zip_code", "state"]);
+  const details = document.getElementById("details");
+  const availability = document.getElementById("availability");
+  const params = new URLSearchParams(location.search);
   const sentence = (text) => {
     const s = text.replace(/^Value error, /, "");
     return `${s.charAt(0).toUpperCase()}${s.slice(1)}${/[.)]$/.test(s) ? "" : "."}`;
@@ -99,6 +117,54 @@
     description: "Please describe what happened in a sentence or two.",
     incident_date: "Please enter a valid date.",
   };
+
+  const digitsOf = (value) => {
+    const d = String(value || "").replace(/\D/g, "");
+    return d.length === 11 && d.startsWith("1") ? d.slice(1) : d;
+  };
+  const area = () => form.practice_area.value;
+  const stateCode = () => form.state.value.trim().toUpperCase();
+  const label = () => meta.practice_areas.find((p) => p.value === area())?.label ?? "this type of";
+
+  // The consent names the number they'll be called or texted on, as it's typed.
+  function renderConsent() {
+    const d = digitsOf(form.phone.value);
+    const number = d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : meta.phone_placeholder;
+    document.getElementById("consent_text").textContent = meta.consent_text.replace(meta.phone_placeholder, number);
+  }
+
+  // Ask only what this matter needs, and say up front when we can't take it, before
+  // anyone types details we would not be allowed to keep.
+  function renderArea() {
+    const a = area();
+    document.getElementById("injury_questions").hidden = !meta.injury_areas.includes(a);
+    document.getElementById("federal_question").hidden = a !== "workers_comp";
+    const notice = document.getElementById("area_notice");
+    notice.textContent = meta.area_notices[a] || "";
+    notice.hidden = !notice.textContent;
+    const sensitive = meta.sensitive_consent[a];
+    document.getElementById("sensitive_wrap").hidden = !sensitive;
+    document.getElementById("sensitive_text").textContent = sensitive || "";
+    const responsible = document.getElementById("responsible");
+    responsible.textContent = meta.responsible_attorneys[stateCode()]
+      ? `Attorney responsible for this advertising in ${stateCode()}: ${meta.responsible_attorneys[stateCode()]}` : "";
+    responsible.hidden = !responsible.textContent;
+
+    const st = stateCode();
+    let closed = "";
+    if (/^[A-Z]{2}$/.test(st) && !(st in meta.open)) {
+      closed = `Sorry, we aren't accepting inquiries from ${st} yet.`;
+    } else if (/^[A-Z]{2}$/.test(st) && a && !meta.open[st].includes(a)) {
+      closed = `Sorry, we aren't accepting ${label()} inquiries from ${st} yet.`;
+    } else if (a === "workers_comp" && form.federal_or_maritime_worker.value === "yes") {
+      closed = "Sorry, claims by federal employees and by longshore, harbor or shipyard workers follow federal programs, so we can't accept them. The U.S. Department of Labor's Office of Workers' Compensation Programs (dol.gov/owcp) can help.";
+    }
+    if (closed) closed += " Your state or local bar association runs a lawyer referral service that can help.";
+    availability.textContent = closed;
+    availability.hidden = !closed;
+    details.hidden = Boolean(closed) && form.federal_or_maritime_worker.value !== "yes";
+    button.disabled = Boolean(closed);
+  }
 
   function clearFieldErrors() {
     form.querySelectorAll(".field-error").forEach((el) => el.remove());
@@ -127,7 +193,8 @@
         .append(h("span", { class: "field-error", id, "aria-hidden": "true" }, message));
       first ??= input;
     }
-    first?.focus();
+    // The first field on the page, not the first one the server listed.
+    form.querySelector("[aria-invalid=true]")?.focus();
     return Boolean(first);
   }
 
@@ -139,20 +206,41 @@
     error.textContent = "";
     clearFieldErrors();
     const data = Object.fromEntries(new FormData(form));
+    const federal = form.federal_or_maritime_worker.value;
+    let referrer = null;
+    try { referrer = document.referrer ? new URL(document.referrer).hostname : null; } catch { referrer = null; }
     const payload = {
       ...data,
+      state: stateCode(),
       incident_date: data.incident_date || null,
       injured: form.injured.checked,
       medical_treatment: form.medical_treatment.checked,
       court_date_soon: form.court_date_soon.checked,
       has_attorney: form.has_attorney.checked,
       consent: form.consent.checked,
+      sensitive_consent: !document.getElementById("sensitive_wrap").hidden && form.sensitive_consent.checked,
+      federal_or_maritime_worker: area() === "workers_comp" ? (federal ? federal === "yes" : null) : null,
       consent_version: meta.consent_version,
-      utm_source: new URLSearchParams(location.search).get("utm_source"),
+      utm_source: params.get("utm_source"),
+      utm_medium: params.get("utm_medium"),
+      utm_campaign: params.get("utm_campaign"),
+      utm_content: params.get("utm_content"),
+      referrer_host: referrer && referrer !== location.hostname ? referrer : null,
+      landing_path: location.pathname,
     };
+    if (payload.federal_or_maritime_worker === null && area() === "workers_comp") {
+      error.textContent = "Please answer whether you're a federal employee or a longshore, harbor or shipyard worker.";
+      form.querySelector("[name=federal_or_maritime_worker]").focus();
+      return;
+    }
     if (!payload.consent) {
       error.textContent = "Please tick the consent box so attorneys are allowed to contact you.";
       form.consent.focus();
+      return;
+    }
+    if (!document.getElementById("sensitive_wrap").hidden && !payload.sensitive_consent) {
+      error.textContent = "Please tick the second box so we may send these details, or we can't help with this matter.";
+      form.sensitive_consent.focus();
       return;
     }
     button.disabled = true;
@@ -170,7 +258,8 @@
         return;
       }
       document.getElementById("result_message").textContent = res.message;
-      document.getElementById("result_ref").textContent = res.lead_id.slice(0, 8).toUpperCase();
+      document.getElementById("result_ref").textContent = res.lead_id ? res.lead_id.slice(0, 8).toUpperCase() : "";
+      document.getElementById("result_ref_line").hidden = !res.lead_id;
       form.hidden = true;
       const result = document.getElementById("result");
       result.hidden = false;
@@ -180,6 +269,7 @@
       error.textContent = shown ? "Please fix the highlighted fields." : err.message;
     } finally {
       button.disabled = false;
+      if (meta) renderArea();
     }
   });
 
@@ -189,12 +279,21 @@
     document.title = `Find an Attorney - ${meta.platform_name}`;
     document.getElementById("platform").textContent = meta.platform_name;
     document.getElementById("disclosure").textContent = meta.disclosure;
-    document.getElementById("consent_text").textContent = meta.consent_text;
+    document.getElementById("operator").textContent = meta.operator ? `· ${meta.platform_name} is operated by ${meta.operator}.` : "";
+    renderConsent();
     const select = document.getElementById("practice_area");
     const chosen = select.value;
     select.replaceChildren(h("option", { value: "" }, "Choose one..."));
     for (const area of meta.practice_areas) select.append(h("option", { value: area.value }, area.label));
     select.value = chosen;
+    renderArea();
+  }
+
+  form.phone.addEventListener("input", () => meta && renderConsent());
+  for (const name of ["state", "practice_area", "federal_or_maritime_worker"]) {
+    for (const el of form.querySelectorAll(`[name=${name}]`)) {
+      el.addEventListener(el.tagName === "INPUT" && el.type === "text" ? "input" : "change", () => meta && renderArea());
+    }
   }
 
   try {

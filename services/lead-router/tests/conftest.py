@@ -39,10 +39,37 @@ def inquiry_data(**overrides: Any) -> dict[str, Any]:
         "has_attorney": False,
         "court_date_soon": False,
         "consent": True,
-        "consent_version": "2026-10-01",
+        "consent_version": "2026-10-15",
+        "sensitive_consent": True,
+        "federal_or_maritime_worker": False,
     }
     data.update(overrides)
     return data
+
+
+# What every test app needs besides its own settings: the demo network is in Illinois,
+# whose injury areas are flagged for counsel review (compliance.RESTRICTIONS); the tests
+# stand in for that approval.
+LAUNCH = {
+    "demo_mode": True,
+    "launch_states": ["IL"],
+    "counsel_cleared": ["IL:personal_injury", "IL:medical_malpractice", "IL:workers_comp"],
+}
+
+
+def add_attorney(client: TestClient, data: dict[str, Any]) -> dict[str, Any]:
+    """Create an attorney through the admin API and record a bar-license check, as staff
+    would at onboarding (attorneys without one get no leads)."""
+    created = client.post("/api/v1/admin/attorneys", json=data, headers=ADMIN)
+    assert created.status_code == 201, created.text
+    numbers = {state: "TEST" for state in data["bar_states"]}
+    checked = client.post(
+        f"/api/v1/admin/attorneys/{created.json()['id']}/license-check",
+        json={"license_numbers": numbers},
+        headers=ADMIN,
+    )
+    assert checked.status_code == 200, checked.text
+    return checked.json()
 
 
 def inquiry(**overrides: Any) -> IntakeRequest:
@@ -61,10 +88,10 @@ def settings() -> Settings:
         admin_api_key="test-admin",
         link_signing_secret=SECRET,
         embedded_worker=False,
-        demo_mode=True,
         smtp_host=None,
         ping_offer_ttl_seconds=90,
         shared_offer_ttl_seconds=900,
+        **LAUNCH,
     )
 
 

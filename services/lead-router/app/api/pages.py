@@ -1,4 +1,5 @@
-"""The three web pages: intake form (public), offer page (attorneys), dashboard (staff)."""
+"""The web pages: intake form and privacy policy (public), offer and bid pages (attorneys),
+dashboard (staff)."""
 
 from __future__ import annotations
 
@@ -29,6 +30,11 @@ _pages = RevalidatedStaticFiles(directory=STATIC)
 @router.get("/")
 async def intake_page(request: Request) -> Response:
     return await _pages.get_response("intake.html", request.scope)
+
+
+@router.get("/privacy")
+async def privacy_page(request: Request) -> Response:
+    return await _pages.get_response("privacy.html", request.scope)
 
 
 @router.get("/offer/{offer_id}")

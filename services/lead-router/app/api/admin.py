@@ -17,6 +17,7 @@ from app.domain.matching import covers_zip
 from app.domain.types import BillingPlan, DistributionModel, LeadStatus, OfferStatus, PracticeArea
 from app.models import Attorney, BidChange, Lead, LedgerEntry, Offer, OutboxMessage, Territory
 from app.schemas import (
+    AgreementIn,
     AttorneyCreate,
     AttorneyOut,
     AttorneyUpdate,
@@ -24,16 +25,19 @@ from app.schemas import (
     BidChangeOut,
     BidLinkOut,
     BillingRunResult,
+    EraseIn,
+    HoldIn,
     LeadDetail,
     LeadSummary,
     LedgerEntryOut,
+    LicenseCheckIn,
     MarketArea,
     OfferOut,
     Statement,
     TerritoryCreate,
     TerritoryOut,
 )
-from app.services import billing, emails, links, market, outbox
+from app.services import billing, emails, links, market, outbox, privacy
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -222,6 +226,95 @@ def send_bid_link(
     outbox.enqueue(db, "email", emails.bids_email(settings, attorney, link))
     db.commit()
     return BidLinkOut(sent_to=attorney.email, link=link if settings.demo_mode else None)
+
+
+@router.post(
+    "/attorneys/{attorney_id}/license-check",
+    response_model=AttorneyOut,
+    summary="Record that staff checked the attorney's bar license(s) on the state bar's site",
+)
+def record_license_check(
+    attorney_id: int, body: LicenseCheckIn, db: Session = Depends(get_db)
+) -> Attorney:
+    attorney = _get_or_404(db, Attorney, attorney_id)
+    missing = sorted(set(attorney.bar_states) - set(body.license_numbers))
+    if missing:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"give a license number for every state the attorney takes leads in: {missing}",
+        )
+    attorney.license_numbers = body.license_numbers
+    attorney.license_verified_at = utcnow()
+    db.commit()
+    return attorney
+
+
+@router.post(
+    "/attorneys/{attorney_id}/agreement",
+    response_model=AttorneyOut,
+    summary="Record that the attorney accepted a version of the participation agreement",
+)
+def record_agreement(
+    attorney_id: int, body: AgreementIn, db: Session = Depends(get_db)
+) -> Attorney:
+    attorney = _get_or_404(db, Attorney, attorney_id)
+    attorney.agreement_version = body.version
+    attorney.agreement_accepted_at = body.accepted_at or utcnow()
+    db.commit()
+    return attorney
+
+
+# --------------------------------------------------------------------------- #
+# People's data: access and deletion requests, legal holds, retention
+# --------------------------------------------------------------------------- #
+@router.get("/privacy/lookup", summary="Everything held about a person, by email or phone")
+def privacy_lookup(
+    email: str | None = None, phone: str | None = None, db: Session = Depends(get_db)
+) -> list[dict]:
+    if not email and not phone:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "give an email or a phone")
+    return [privacy.export(db, lead) for lead in privacy.find(db, email, phone)]
+
+
+@router.post("/leads/{lead_id}/erase", summary="Erase a lead's personal details")
+def erase_lead(
+    lead_id: str,
+    body: EraseIn,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    lead = _get_or_404(db, Lead, lead_id)
+    try:
+        privacy.erase(
+            db, settings, lead, body.level, utcnow(), reason=body.reason, notify_attorneys=True
+        )
+    except privacy.PrivacyError as err:
+        db.rollback()
+        raise HTTPException(err.status_code, err.message) from err
+    db.commit()
+    return {
+        "lead_id": lead.id,
+        "narrative_erased_at": lead.narrative_erased_at,
+        "erased_at": lead.erased_at,
+        "note": None
+        if not (settings.exo_sync_enabled and settings.exo_sync_contact_details)
+        else "eXo has a copy with contact details: delete it there by hand",
+    }
+
+
+@router.post("/leads/{lead_id}/legal-hold", summary="Put a lead under a legal hold, or lift it")
+def legal_hold(lead_id: str, body: HoldIn, db: Session = Depends(get_db)) -> dict:
+    lead = _get_or_404(db, Lead, lead_id)
+    privacy.set_hold(db, lead, body.on, body.reason)
+    db.commit()
+    return {"lead_id": lead.id, "legal_hold": bool(lead.legal_hold)}
+
+
+@router.post("/retention/run", summary="Run the retention schedule now (the worker also does)")
+def run_retention(
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
+) -> dict:
+    return privacy.purge_due(db, settings, utcnow())
 
 
 @router.get(

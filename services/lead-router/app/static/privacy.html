@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Privacy Policy</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<!-- Describes what this software actually does. Keep it in step with the code, and have
+     counsel approve it before launch (docs/legal/COUNSEL_BRIEF.md). -->
+<main class="wrap policy">
+  <header class="top">
+    <h1>Privacy Policy</h1>
+    <span class="tag">Last updated October 15, 2026</span>
+  </header>
+
+  <section class="card">
+    <h2>Who we are</h2>
+    <p><span data-fill="platform"></span><span data-fill="operator_sentence"></span> is an advertising service paid for by participating attorneys. We are not a law firm and we don't give legal advice. This policy explains what we collect when you send us an inquiry, who receives it, how long we keep it and the choices you have.</p>
+
+    <h2>What we collect</h2>
+    <ul>
+      <li><strong>What you type on the form:</strong> your name, email, phone number, ZIP code and state, the type of legal matter, when it happened, your description, and your answers to a few questions (whether you have a court date coming up or already have an attorney, and, only for injury-related matters, whether you were injured or received medical treatment).</li>
+      <li><strong>Your consent:</strong> the exact wording you agreed to, its version, and the time.</li>
+      <li><strong>From your browser:</strong> your IP address, your browser's description of itself (user agent), whether it sent a Global Privacy Control signal, the website that linked you here, and any campaign tags in the link (such as utm_source).</li>
+    </ul>
+    <p>The form uses no tracking cookies, and no advertising or analytics tools from other companies run on it.</p>
+
+    <h2>Health and immigration information</h2>
+    <p>For personal injury, medical malpractice and workers' compensation matters we ask about injuries and medical treatment, and your description may include health information. For immigration matters your description may reveal immigration-related information. We collect and send this information only with the separate consent you give on the form for these matters. We don't ask these questions for other matters.</p>
+    <p data-fill="health_states"></p>
+
+    <h2>How we use it</h2>
+    <ul>
+      <li>To send your inquiry to participating attorneys, as you ask us to on the form.</li>
+      <li>To email you a receipt, and to tell you which attorney accepted your inquiry.</li>
+      <li>To keep a record of your consent and of how we handled your inquiry.</li>
+      <li>To prevent spam, fraud and duplicate submissions, and to comply with the law.</li>
+    </ul>
+    <p>We don't use your information to advertise to you, we don't send it to advertising or analytics companies, and we don't sell it to data brokers.</p>
+
+    <h2>Who receives it</h2>
+    <ul>
+      <li><strong>Participating attorneys.</strong> Up to <span data-fill="max_attorneys"></span> attorneys who are licensed in your state, handle your type of matter and serve your ZIP code are offered your inquiry. Before one accepts, they see a summary without your name, phone number or email. The attorney who accepts receives your full details and your description. Where one attorney pays a monthly fee for every inquiry of your type in your ZIP code, that attorney receives your inquiry directly. Attorneys pay us for each inquiry or a monthly fee.</li>
+      <li><strong>Our service providers,</strong> such as our hosting and email providers, who handle it only to provide their services to us.</li>
+      <li><strong>Others when the law requires it,</strong> for example in response to a court order or subpoena, or to protect people's rights and safety; and a buyer of our business, which would have to honor this policy.</li>
+    </ul>
+    <p>Because attorneys pay us, some state privacy laws may treat sending them your information as a "sale" or "sharing" of personal information. We send it only to the attorneys you ask us to send it to, and to no one else for money.</p>
+
+    <h2>How long we keep it</h2>
+    <ul>
+      <li>Submissions we couldn't accept (for example, spam or missing consent): erased after <span data-fill="rejected"></span> days.</li>
+      <li>Inquiries no attorney took: erased after <span data-fill="unrouted"></span> days.</li>
+      <li>Inquiries an attorney took: your description and health and matter details are erased after <span data-fill="narrative"></span> days. Your name, contact details, IP address and the consent you gave are kept for about <span data-fill="evidence_years"></span> years, as evidence of your consent if a contact-law question ever comes up, and then erased.</li>
+      <li>Copies of emails we sent: erased after <span data-fill="sent_email"></span> days.</li>
+    </ul>
+    <p>We keep information longer only when the law requires it, for example when it is needed for a lawsuit or investigation. Attorneys who received your details keep their own records under their own obligations.</p>
+
+    <h2>Your choices and rights</h2>
+    <ul>
+      <li><strong>Stop contact:</strong> tell the attorney, or reply STOP to their text messages. You can also ask us, and we will tell the attorney.</li>
+      <li><strong>See, correct or delete your information:</strong> email <a data-fill="privacy_link"></a> with your reference number from our receipt email, or the email address and phone number you used. We confirm it's you by matching those details, and reply within 45 days. When we delete your information we also ask the attorney who received it to delete it.</li>
+      <li><strong>Opt out of sale or sharing:</strong> we don't sell or share your information except to the attorneys you ask us to contact. If your browser sends a Global Privacy Control signal we record it and treat it as a request not to sell or share.</li>
+      <li><strong>Agents and appeals:</strong> someone you authorize may make a request for you. If we turn down a request you can ask us to reconsider by replying to our answer, and you can contact your state attorney general.</li>
+    </ul>
+    <p>We won't treat you differently for using these rights.</p>
+
+    <h2>Children</h2>
+    <p>The form is for adults. You must be 18 or older to use it, and we don't knowingly collect information from children under 13. If you think a child has sent us information, email us and we will delete it.</p>
+
+    <h2>Security</h2>
+    <p>We protect your information with reasonable safeguards, including encrypted connections and limited staff access. No system is completely secure; if a breach affects your information, we will tell you as the law requires.</p>
+
+    <h2>Changes and contact</h2>
+    <p>If we change this policy we will update the date above. Questions: <a data-fill="privacy_link"></a><span data-fill="address_sentence"></span></p>
+  </section>
+  <p><a href="/">Back to the form</a></p>
+</main>
+
+<script type="module">
+  import { api } from "/static/common.js";
+
+  const HEALTH_STATES = ["WA", "NV", "CT", "MD"];
+  const INJURY = ["personal_injury", "medical_malpractice", "workers_comp"];
+  const set = (name, text) => document.querySelectorAll(`[data-fill=${name}]`).forEach((el) => { el.textContent = text; });
+
+  try {
+    const meta = await api("/api/v1/meta");
+    const days = meta.retention_days;
+    document.title = `Privacy Policy - ${meta.platform_name}`;
+    set("platform", meta.platform_name);
+    set("operator_sentence", meta.operator ? ` (operated by ${meta.operator})` : "");
+    set("max_attorneys", String(meta.max_attorneys));
+    for (const key of ["rejected", "unrouted", "narrative", "sent_email"]) set(key, String(days[key]));
+    set("evidence_years", String(Math.round((days.evidence / 365) * 10) / 10));
+    set("address_sentence", meta.operator ? `, or write to ${meta.operator}.` : ".");
+    for (const a of document.querySelectorAll("[data-fill=privacy_link]")) {
+      a.textContent = meta.privacy_email;
+      a.href = `mailto:${meta.privacy_email}`;
+    }
+    const open = HEALTH_STATES.filter((st) => (meta.open[st] || []).some((area) => INJURY.includes(area)));
+    set("health_states", open.length
+      ? `Some states have consumer health data laws. We accept injury-related inquiries from ${open.join(", ")} only with the consent and authorizations those laws require.`
+      : "Some states, such as Washington, Nevada, Connecticut and Maryland, have consumer health data laws. We don't currently accept injury-related inquiries from those states.");
+  } catch {
+    set("health_states", "");
+  }
+</script>
+</body>
+</html>

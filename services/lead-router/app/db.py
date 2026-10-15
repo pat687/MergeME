@@ -59,6 +59,21 @@ ADDED_COLUMNS = [
     ("leads", "max_attorneys", "INTEGER"),
     ("attorneys", "bids_link_version", "INTEGER NOT NULL DEFAULT 0"),
     ("offers", "price_note", "VARCHAR(200)"),
+    ("leads", "utm_medium", "VARCHAR(120)"),
+    ("leads", "utm_campaign", "VARCHAR(120)"),
+    ("leads", "utm_content", "VARCHAR(120)"),
+    ("leads", "referrer_host", "VARCHAR(120)"),
+    ("leads", "landing_path", "VARCHAR(120)"),
+    ("leads", "sensitive_consent_text", "TEXT"),
+    ("leads", "gpc", "BOOLEAN"),
+    ("leads", "legal_hold", "BOOLEAN"),
+    ("leads", "legal_hold_reason", "VARCHAR(200)"),
+    ("leads", "narrative_erased_at", "TIMESTAMP"),
+    ("leads", "erased_at", "TIMESTAMP"),
+    ("attorneys", "license_numbers", "JSON"),
+    ("attorneys", "license_verified_at", "TIMESTAMP"),
+    ("attorneys", "agreement_version", "VARCHAR(40)"),
+    ("attorneys", "agreement_accepted_at", "TIMESTAMP"),
 ]
 
 
