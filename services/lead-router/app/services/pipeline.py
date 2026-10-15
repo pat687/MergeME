@@ -21,19 +21,20 @@ from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.domain import compliance, scoring, scrubbing
+from app.domain import compliance, scoring, scrubbing, zipcodes
 from app.domain.distribution import DistributionPlan, plan_distribution
 from app.domain.matching import Candidate
 from app.domain.types import DistributionModel, LeadStatus, OfferStatus
 from app.models import Attorney, Lead, Offer, Territory
 from app.schemas import IntakeRequest
-from app.services import audit, emails, exo_sync, offers, outbox
+from app.services import audit, emails, exo_sync, market, offers, outbox
 
 
 @dataclass(frozen=True)
 class RequestMeta:
     ip_address: str | None = None
     user_agent: str | None = None
+    gpc: bool | None = None  # the browser sent Sec-GPC: 1
 
 
 def _lock_key(value: str) -> int:
@@ -79,8 +80,11 @@ def _is_duplicate(db: Session, lead: Lead, now: datetime, window_days: int) -> b
     )
 
 
-def _snapshot(attorney: Attorney, accepted_today: dict[int, int]) -> Candidate:
+def _snapshot(
+    settings: Settings, attorney: Attorney, accepted_today: dict[int, int], now: datetime
+) -> Candidate:
     return Candidate(
+        credentials_problem=offers.credentials_problem(settings, attorney, now),
         attorney_id=attorney.id,
         name=attorney.name,
         active=attorney.active,
@@ -110,7 +114,7 @@ def _plan(
         )
     counts = offers.accepted_today(db, settings, now)
     # Fine at hundreds of attorneys. At larger scale, pre-filter by state/ZIP in SQL.
-    candidates = [_snapshot(a, counts) for a in db.scalars(select(Attorney)).all()]
+    candidates = [_snapshot(settings, a, counts, now) for a in db.scalars(select(Attorney)).all()]
     owner = next(
         (c for c in candidates if territory and c.attorney_id == territory.attorney_id), None
     )
@@ -123,22 +127,57 @@ def _plan(
         policy_model=DistributionModel(settings.policy_for(inquiry.practice_area)),
         max_recipients=settings.shared_max_attorneys,
         floor_cents=settings.floor_for(inquiry.practice_area),
+        pricing=settings.auction_pricing,
+        increment_cents=settings.bid_increment_cents,
     )
+
+
+def refusal(settings: Settings, inquiry: IntakeRequest) -> str | None:
+    """Inquiries we can't accept at all, decided before anything is stored: a state or
+    practice area that isn't open (settings.closed_reason), or a federal or maritime
+    workers' comp claim. Returns the compliance.consumer_message key, or None."""
+    if settings.closed_reason(inquiry.state, inquiry.practice_area):
+        return "closed"
+    # The ZIP's own state must be open too: typing an open state with a ZIP code from a
+    # closed one doesn't get an inquiry through.
+    zip_state = zipcodes.state_for_zip(inquiry.zip_code)
+    if (
+        zip_state
+        and zip_state != inquiry.state
+        and settings.closed_reason(zip_state, inquiry.practice_area)
+    ):
+        return "closed"
+    if inquiry.federal_or_maritime_worker:
+        return "federal_worker"
+    return None
 
 
 def process_intake(
     db: Session, settings: Settings, inquiry: IntakeRequest, meta: RequestMeta, now: datetime
 ) -> Lead:
+    if refusal(settings, inquiry):
+        raise ValueError("refused inquiries must not be stored; check pipeline.refusal first")
     # 1) Capture -----------------------------------------------------------
     lead = Lead(
         created_at=now,
         status=LeadStatus.RECEIVED,
         consent_at=now,
-        consent_text=compliance.consent_text(settings.platform_name, settings.shared_max_attorneys),
+        # The number is written into the consent, as the form showed it.
+        consent_text=compliance.consent_text(
+            settings.platform_name, settings.shared_max_attorneys, inquiry.phone
+        ),
+        sensitive_consent_text=(
+            compliance.sensitive_consent_text(settings.platform_name, inquiry.practice_area)
+            if inquiry.sensitive_consent
+            else None
+        ),
         max_attorneys=settings.shared_max_attorneys,
         ip_address=meta.ip_address,
         user_agent=(meta.user_agent or "")[:300] or None,
-        **inquiry.model_dump(exclude={"website"}),
+        gpc=meta.gpc,
+        **inquiry.model_dump(
+            exclude={"website", "sensitive_consent", "federal_or_maritime_worker"}
+        ),
     )
     db.add(lead)
     db.flush()
@@ -180,13 +219,18 @@ def process_intake(
     if not plan.has_buyer:
         lead.status = LeadStatus.UNSERVICEABLE
         audit.record(db, lead.id, "unserviceable", reason="no eligible attorney for this lead")
-        outbox.enqueue(db, "email", emails.consumer_receipt(settings, lead))
+        outbox.enqueue(db, "email", emails.consumer_receipt(settings, lead), lead_id=lead.id)
         db.commit()
         return lead
 
     lead.distribution_model = plan.model
     if settings.exo_sync_enabled:
-        outbox.enqueue(db, "exo.create_lead", exo_sync.lead_payload(lead))
+        outbox.enqueue(
+            db,
+            "exo.create_lead",
+            exo_sync.lead_payload(lead, settings.exo_sync_contact_details),
+            lead_id=lead.id,
+        )
 
     created = _create_offers(db, settings, lead, plan, now)
 
@@ -204,7 +248,7 @@ def process_intake(
                 offers.notify_offer(db, settings, lead, offer)
         offers.close_line_up_if_full(db, settings, lead, now)
 
-    outbox.enqueue(db, "email", emails.consumer_receipt(settings, lead))
+    outbox.enqueue(db, "email", emails.consumer_receipt(settings, lead), lead_id=lead.id)
     db.commit()
     return lead
 
@@ -221,6 +265,7 @@ def _create_offers(
             round=spec.round,
             status=spec.status,
             price_cents=spec.price_cents,
+            price_note=market.price_note(spec.basis, settings.bid_increment_cents),
             created_at=now,
         )
         if spec.status == OfferStatus.PENDING:

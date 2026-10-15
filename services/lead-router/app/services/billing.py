@@ -16,6 +16,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import Settings
 from app.domain import compliance
 from app.domain.types import BillingPlan, ChargeKind, PracticeArea
 from app.models import Attorney, Lead, LedgerEntry, Offer, Territory
@@ -57,12 +58,23 @@ def charge_for_delivery(db: Session, offer: Offer, lead: Lead, now: datetime) ->
     )
 
 
-def run_monthly_billing(db: Session, period: str, now: datetime) -> tuple[int, int]:
+def run_monthly_billing(
+    db: Session, settings: Settings, period: str, now: datetime
+) -> tuple[int, int, list[str]]:
+    """Monthly fees. An attorney who can't receive leads right now (no recent license check,
+    or the current agreement not accepted) isn't charged automatically: their fee is
+    listed in `held` for staff to decide."""
+    from app.services.offers import credentials_problem  # offers imports this module
+
     created = skipped = 0
+    held: list[str] = []
     subscribers = db.scalars(
         select(Attorney).where(Attorney.plan == BillingPlan.SUBSCRIPTION, Attorney.active)
     ).all()
     for a in subscribers:
+        if problem := credentials_problem(settings, a, now):
+            held.append(f"{a.name}: subscription ({problem})")
+            continue
         ok = _add(
             db,
             attorney_id=a.id,
@@ -82,6 +94,10 @@ def run_monthly_billing(db: Session, period: str, now: datetime) -> tuple[int, i
     # Inactive owners don't receive their territory's leads, so they aren't charged rent.
     active_territories = select(Territory).join(Attorney).where(Attorney.active)
     for t in db.scalars(active_territories).all():
+        owner = db.get(Attorney, t.attorney_id)
+        if problem := credentials_problem(settings, owner, now):
+            held.append(f"{owner.name}: territory {t.practice_area} {t.zip_code} ({problem})")
+            continue
         ok = _add(
             db,
             attorney_id=t.attorney_id,
@@ -101,7 +117,7 @@ def run_monthly_billing(db: Session, period: str, now: datetime) -> tuple[int, i
             skipped += 1
 
     db.commit()
-    return created, skipped
+    return created, skipped, held
 
 
 def statement(db: Session, attorney_id: int, period: str) -> list[LedgerEntry]:

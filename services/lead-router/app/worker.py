@@ -3,6 +3,8 @@
 Every couple of seconds it:
   1. times out offers nobody answered (and moves the ping tree to the next bidder)
   2. sends whatever is waiting in the outbox (emails, eXo updates)
+Every ten minutes it also erases personal details that are past their retention
+period (services/privacy.py), except for leads under a legal hold.
 
 Run it inside the API (simple) or as its own process: `python -m app.worker`.
 `python -m app.worker --check` exits 0 only if the worker finished a cycle recently
@@ -22,11 +24,13 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings, get_settings
 from app.db import Base, make_engine, make_session_factory, upgrade_schema, utcnow
-from app.services import offers, outbox
+from app.services import offers, outbox, privacy
 from app.services.exo_sync import ExoLeadCaptureClient
 from app.services.notifier import make_mailer
 
 log = logging.getLogger("lead_router.worker")
+PURGE_EVERY_SECONDS = 600
+_last_purge = float("-inf")
 
 
 def build_handlers(settings: Settings) -> dict[str, outbox.Handler]:
@@ -59,6 +63,13 @@ def run_cycle(
         )
     if expired or delivered:
         log.info("worker cycle: expired=%s delivered=%s", expired, delivered)
+    global _last_purge
+    if time.monotonic() - _last_purge >= PURGE_EVERY_SECONDS:
+        _last_purge = time.monotonic()
+        with session_factory() as db:
+            purged = privacy.purge_due(db, settings, now)
+        if any(purged.values()):
+            log.info("retention: erased %s", purged)
     return {"expired": expired, "delivered": delivered}
 
 

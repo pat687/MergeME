@@ -33,7 +33,7 @@ from app.config import Settings
 from app.domain.types import DistributionModel, LeadStatus, OfferStatus
 from app.models import Attorney, Lead, Offer
 from app.schemas import OfferView
-from app.services import audit, billing, emails, links, outbox
+from app.services import audit, billing, emails, exo_sync, links, outbox
 
 
 class OfferError(Exception):
@@ -74,12 +74,28 @@ def accepted_today(
     return {attorney: count for attorney, count in db.execute(stmt).all()}
 
 
+def credentials_problem(settings: Settings, attorney: Attorney, now: datetime) -> str | None:
+    """A recent bar-license check, and the current participation agreement if there is one.
+    Checked when the line-up is made, when each attorney's turn comes, and at acceptance."""
+    if settings.require_license_verification and (
+        attorney.license_verified_at is None
+        or attorney.license_verified_at < now - timedelta(days=settings.license_recheck_days)
+    ):
+        return "bar license not checked recently"
+    wanted = settings.attorney_agreement_version
+    if wanted and attorney.agreement_version != wanted:
+        return "hasn't accepted the current participation agreement"
+    return None
+
+
 def unavailable_reason(
     db: Session, settings: Settings, attorney: Attorney, now: datetime
 ) -> str | None:
     """Re-checked at the moment of acceptance, not just when the offer was made."""
     if not attorney.active:
         return "inactive"
+    if problem := credentials_problem(settings, attorney, now):
+        return problem
     taken = accepted_today(db, settings, now, attorney.id).get(attorney.id, 0)
     if taken >= attorney.daily_cap:
         return "daily lead cap reached"
@@ -92,7 +108,9 @@ def unavailable_reason(
 def notify_offer(db: Session, settings: Settings, lead: Lead, offer: Offer) -> None:
     link = links.offer_link(settings.public_base_url, settings.link_signing_secret, offer.id)
     attorney = db.get(Attorney, offer.attorney_id)
-    outbox.enqueue(db, "email", emails.offer_email(settings, lead, offer, attorney, link))
+    outbox.enqueue(
+        db, "email", emails.offer_email(settings, lead, offer, attorney, link), lead_id=lead.id
+    )
 
 
 def finalize_assignment(
@@ -101,10 +119,19 @@ def finalize_assignment(
     """Everything that happens once a lead belongs to an attorney."""
     attorney = db.get(Attorney, offer.attorney_id)
     billing.charge_for_delivery(db, offer, lead, now)
-    outbox.enqueue(db, "email", emails.delivered_email(settings, lead, offer, attorney))
+    outbox.enqueue(
+        db, "email", emails.delivered_email(settings, lead, offer, attorney), lead_id=lead.id
+    )
+    # The person is told who has their details, so they can check the attorney's license,
+    # tell them to stop, or ask us to delete their information.
+    outbox.enqueue(db, "email", emails.consumer_assigned(settings, lead, attorney), lead_id=lead.id)
     if settings.exo_sync_enabled and attorney.exo_username:
+        email = exo_sync.exo_email(lead, settings.exo_sync_contact_details)
         outbox.enqueue(
-            db, "exo.assign_lead", {"email": lead.email, "assignee": attorney.exo_username}
+            db,
+            "exo.assign_lead",
+            {"email": email, "assignee": attorney.exo_username},
+            lead_id=lead.id,
         )
     audit.record(
         db,
@@ -187,9 +214,44 @@ def close_line_up_if_full(db: Session, settings: Settings, lead: Lead, now: date
     audit.record(db, lead.id, "line_up_full", reason=reason, not_asked=[n for _, n in waiting])
 
 
+WITHDRAWN = "withdrawn: no longer accepted for this state or matter"
+
+
+def withdraw_if_closed(db: Session, settings: Settings, lead: Lead, now: datetime) -> bool:
+    """The state or practice area was closed while the lead was still on offer (launch
+    states, counsel clearances or blocks changed): nobody else is asked, nobody can accept,
+    and the lead ends unsold. True if that happened."""
+    reason = settings.closed_reason(lead.state, lead.practice_area)
+    if not reason or lead.status != LeadStatus.OFFERED:
+        return False
+    db.execute(
+        update(Offer)
+        .where(
+            Offer.lead_id == lead.id,
+            Offer.status.in_([OfferStatus.PENDING, OfferStatus.QUEUED]),
+        )
+        .values(status=OfferStatus.SKIPPED, responded_at=now, decline_reason=WITHDRAWN)
+    )
+    went_unsold = db.execute(
+        update(Lead)
+        .where(
+            Lead.id == lead.id,
+            Lead.status == LeadStatus.OFFERED,
+            Lead.assigned_attorney_id.is_(None),
+        )
+        .values(status=LeadStatus.UNSOLD)
+    ).rowcount
+    if went_unsold:
+        db.refresh(lead)
+        audit.record(db, lead.id, "withdrawn", reason=reason)
+    return True
+
+
 def advance(db: Session, settings: Settings, lead: Lead, now: datetime) -> None:
     """After a decline, timeout or skip: ask the next attorney, or give up if no one is left."""
     if lead.status != LeadStatus.OFFERED:
+        return
+    if withdraw_if_closed(db, settings, lead, now):
         return
     still_waiting = db.scalar(
         select(func.count()).where(Offer.lead_id == lead.id, Offer.status == OfferStatus.PENDING)
@@ -212,6 +274,8 @@ def advance(db: Session, settings: Settings, lead: Lead, now: datetime) -> None:
             # Things may have changed since the line-up was made.
             if not attorney.active:
                 reason = "inactive"
+            elif problem := credentials_problem(settings, attorney, now):
+                reason = problem
             elif counts.get(attorney.id, 0) >= attorney.daily_cap:
                 reason = "daily lead cap reached"
             else:
@@ -310,6 +374,9 @@ def accept(db: Session, settings: Settings, offer_id: str, token: str, now: date
         raise OfferError(409, "this offer has expired")
     if offer.status != OfferStatus.PENDING:
         raise _closed(offer)
+    if withdraw_if_closed(db, settings, lead, now):
+        db.commit()
+        raise OfferError(409, "this lead is no longer available")
 
     attorney = _lock(db, Attorney, offer.attorney_id)
     if reason := unavailable_reason(db, settings, attorney, now):
@@ -446,10 +513,23 @@ def view(db: Session, settings: Settings, offer_id: str, token: str, now: dateti
         seconds_left=seconds_left,
         contact=contact,
         notice=_notice(offer),
+        price_note=offer.price_note,
     )
 
 
+CREDENTIAL_REASONS = ("bar license not checked recently", "hasn't accepted the current")
+
+
 def _notice(offer: Offer) -> str:
-    if offer.status == OfferStatus.SKIPPED and (offer.decline_reason or "").startswith("line-up"):
-        return "This lead was offered to the agreed number of attorneys before your turn came."
+    reason = offer.decline_reason or ""
+    if offer.status == OfferStatus.SKIPPED:
+        if reason.startswith("line-up"):
+            return "This lead was offered to the agreed number of attorneys before your turn came."
+        if reason.startswith("withdrawn"):
+            return "This inquiry was withdrawn, so it's no longer available."
+        if reason.startswith(CREDENTIAL_REASONS):
+            return (
+                "This lead moved on because your bar license check or participation agreement "
+                "needs renewing. Please contact us."
+            )
     return NOTICES[OfferStatus(offer.status)]

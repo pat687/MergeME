@@ -134,7 +134,8 @@ async function newFamilyLead() {
   const messages = (await page.$$eval(".field-error", (els) => els.map((e) => e.textContent))).join(" ");
   const invalid = await page.$$eval("[aria-invalid=true]", (els) => els.length);
   const focused = await page.evaluate(() => document.activeElement?.name);
-  check("intake shows friendly field errors", invalid >= 5 && focused === "first_name" && !/Value error|Input should/.test(messages),
+  // State and matter type come first, so the first field to fix is the ZIP code.
+  check("intake shows friendly field errors", invalid >= 5 && focused === "zip_code" && !/Value error|Input should/.test(messages),
     JSON.stringify({ invalid, focused }));
   // The specific reason is shown when our own check has one, and read once (as the
   // field's description, not also as part of its label).
@@ -149,6 +150,57 @@ async function newFamilyLead() {
   check("name errors give the real reason, read once",
     /period must be followed by a space/.test(nameError.text) && nameError.hidden === "true"
       && nameError.described.includes("error_first_name"), JSON.stringify(nameError));
+
+  // Intake form: says up front when a state or matter isn't accepted (before anyone
+  // types details), asks injury questions and the separate health consent only where
+  // they apply, and writes the typed phone number into the consent.
+  const meta = await (await fetch(`${BASE}/api/v1/meta`)).json();
+  // A state this stack doesn't accept, and one where injury matters are open.
+  const closedState = ["WY", "VT", "ND", "WA", "WI"].find((st) => !(st in meta.open));
+  const openState = Object.keys(meta.open).find((st) => meta.open[st].includes("personal_injury"));
+  page = await open({ viewport: { width: 390, height: 844 } });
+  await page.goto(`${BASE}/`);
+  await page.waitForSelector("#submit:not([disabled])");
+  await page.fill("[name=state]", closedState);
+  await page.selectOption("#practice_area", "personal_injury");
+  const closedForm = await page.evaluate(() => ({
+    notice: document.getElementById("availability").textContent,
+    detailsHidden: document.getElementById("details").hidden,
+    submitDisabled: document.getElementById("submit").disabled,
+  }));
+  await page.fill("[name=state]", openState);
+  // What a person actually sees, not just the hidden attribute.
+  const injuryForm = {
+    detailsHidden: !(await page.isVisible("#details")),
+    injury: await page.isVisible("#injury_questions"),
+    sensitive: await page.isVisible("#sensitive_wrap"),
+  };
+  await page.selectOption("#practice_area", "family_law");
+  const familyForm = {
+    injury: await page.isVisible("#injury_questions"),
+    sensitive: await page.isVisible("#sensitive_wrap"),
+  };
+  await page.fill("[name=phone]", "312 555 0199");
+  const consentShown = await page.textContent("#consent_text");
+  check("intake says which states and matters it can't take, before details are typed",
+    closedForm.notice.includes(`aren't accepting inquiries from ${closedState}`) && closedForm.detailsHidden
+      && closedForm.submitDisabled && !injuryForm.detailsHidden,
+    JSON.stringify(closedForm));
+  check("injury questions and the health consent appear only for injury matters; consent names the number",
+    injuryForm.injury && injuryForm.sensitive && !familyForm.injury && !familyForm.sensitive
+      && consentShown.includes("(312) 555-0199"),
+    JSON.stringify({ injuryForm, familyForm, consentShown: consentShown.slice(0, 160) }));
+
+  page = await open();
+  await page.goto(`${BASE}/privacy`);
+  await page.waitForFunction(() => document.querySelector("[data-fill=rejected]")?.textContent);
+  const policy = await page.evaluate(() => ({
+    rejected: document.querySelector("[data-fill=rejected]").textContent,
+    email: document.querySelector("[data-fill=privacy_link]").textContent,
+  }));
+  check("privacy policy fills in the real retention periods and contact",
+    policy.rejected === String(meta.retention_days.rejected) && policy.email === meta.privacy_email,
+    JSON.stringify(policy));
 
   // Intake form: Enter before the form's settings load must not submit natively
   // (that would put the person's details in the page URL).
@@ -253,6 +305,86 @@ async function newFamilyLead() {
   const sidewaysAfter = await page.evaluate(() => document.querySelector("#detail .table-wrap")?.scrollLeft ?? 0);
   check("a different lead's offers table starts at the left edge",
     sidewaysBefore > 0 && sidewaysAfter === 0, JSON.stringify({ sidewaysBefore, sidewaysAfter }));
+
+  // Bid page: an attorney sees where they rank, gets a clear reason when a bid is too
+  // low, and moves to first place by raising it. Keyboard focus survives both saves.
+  // A throwaway attorney bidding $70 like Sam, so the demo attorneys' bids (and their daily
+  // limit on bid saves) are left alone; it's deactivated again at the end.
+  const bidder = await (await fetch(`${BASE}/api/v1/admin/attorneys`, {
+    method: "POST", headers: { "X-Admin-Key": KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: `Browser Bidder ${process.pid}`, firm: "Example Firm (Demo)",
+      email: `browser.bidder.${process.pid}@example.com`, bar_states: ["IL"],
+      service_zips: ["606"], bids_cents: { personal_injury: 7000 },
+    }),
+  })).json();
+  await fetch(`${BASE}/api/v1/admin/attorneys/${bidder.id}/license-check`, {  // as at onboarding
+    method: "POST", headers: { "X-Admin-Key": KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ license_numbers: { IL: "TEST" } }),
+  });
+  const bidLink = (await (await fetch(`${BASE}/api/v1/admin/attorneys/${bidder.id}/bid-link`,
+    { method: "POST", headers: { "X-Admin-Key": KEY } })).json()).link;
+  page = await open({ viewport: { width: 390, height: 900 } });
+  await page.goto(bidLink);
+  await page.waitForSelector("#bid_personal_injury");
+  const piCell = (n) => page.$eval("#bid_personal_injury", (el, i) => el.closest("tr").cells[i].textContent, n);
+  const rankBefore = await piCell(2);
+  const firstBefore = await piCell(3);  // Avery bids $95: shown rounded up to $100, never exact
+  await page.fill("#bid_personal_injury", "10");
+  await page.focus("#save");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("#message.error");
+  const tooLow = await page.textContent("#message");
+  const refusedFocus = await page.evaluate(() =>
+    [document.activeElement.id, document.activeElement.getAttribute("aria-invalid")].join(" "));
+  await page.fill("#bid_personal_injury", "99");
+  await page.focus("#save");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("text=Saved.");
+  const savedFocus = await page.evaluate(() => document.activeElement.id);
+  const rankAfter = await piCell(2);
+  const firstAfter = await piCell(3);
+  const bidOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  check("attorney bid page explains the floor and a higher bid moves them to first",
+    /lowest bid accepted/.test(tooLow) && !rankBefore.startsWith("#1 ") && rankAfter.startsWith("#1 ")
+      && firstBefore === "$100.00" && firstAfter === "You're first" && bidOverflow <= 0,
+    JSON.stringify({ tooLow, rankBefore, rankAfter, firstBefore, firstAfter, bidOverflow }));
+  check("bid page keeps keyboard focus: on the refused field, then on Save",
+    refusedFocus === "bid_personal_injury true" && savedFocus === "save",
+    JSON.stringify({ refusedFocus, savedFocus }));
+
+  // Subscribers' leads are included in their fee, so a bid would cost them nothing: their
+  // page shows the market but can't be changed.
+  const morgan = (await adminGet("/api/v1/admin/attorneys")).find((a) => a.name === "Morgan Lee");
+  const morganLink = (await (await fetch(`${BASE}/api/v1/admin/attorneys/${morgan.id}/bid-link`,
+    { method: "POST", headers: { "X-Admin-Key": KEY } })).json()).link;
+  page = await open({ viewport: { width: 390, height: 900 } });
+  await page.goto(morganLink);
+  await page.waitForSelector("#bid_family_law");
+  const readOnly = await page.$eval("#bid_family_law", (el) => el.readOnly);
+  check("a subscriber's bid page is read-only", readOnly && (await page.$("#save")) === null,
+    JSON.stringify({ readOnly }));
+
+  // Dashboard market panel: a refresh with new data doesn't wipe text being selected.
+  page = await open({ viewport: { width: 1280, height: 900 } });
+  await page.goto(`${BASE}/admin`);
+  await page.fill("#key", KEY);
+  await page.click("#login_form button");
+  await page.click("#market summary");
+  await page.waitForSelector("#market_rows tr");
+  const selectBidders = () => page.evaluate(() => {
+    getSelection().selectAllChildren(document.querySelector("#market_rows tr td:nth-child(4)"));
+    return getSelection().toString();
+  });
+  const selectedBefore = await selectBidders();
+  await fetch(`${BASE}/api/v1/admin/attorneys/${bidder.id}`, {  // retire it; the market changes
+    method: "PATCH", headers: { "X-Admin-Key": KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ active: false }),
+  });
+  await page.waitForTimeout(6000);
+  const selectedAfter = await page.evaluate(() => getSelection().toString());
+  check("market panel refresh keeps text the operator is selecting",
+    selectedBefore.length > 0 && selectedAfter === selectedBefore, JSON.stringify({ selectedBefore, selectedAfter }));
 
   check("no JavaScript errors on any page", pageErrors.length === 0, pageErrors.join(" | "));
   await browser.close();

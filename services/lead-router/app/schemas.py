@@ -10,10 +10,19 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
+from app.domain import compliance
 from app.domain.types import (
     BillingPlan,
     ChargeKind,
@@ -174,16 +183,35 @@ class IntakeRequest(BaseModel):
     court_date_soon: bool = False
     consent: bool = Field(description="Agreed to be contacted by participating attorneys")
     consent_version: str = Field(min_length=1, max_length=40)
+    sensitive_consent: bool = Field(
+        default=False,
+        description="Separate consent to send health or immigration details; required in "
+        "personal injury, medical malpractice, workers' comp and immigration",
+    )
+    federal_or_maritime_worker: bool | None = Field(
+        default=None,
+        description="Workers' comp only, required there: a federal employee or a longshore, "
+        "harbor or shipyard worker (those claims aren't accepted)",
+    )
     # Honeypot: hidden from humans by CSS. Bots fill every field, people don't.
     website: str = ""
+    # Where the inquiry came from, kept as evidence that it came from advertising the
+    # person responded to (never from outreach to them). Cleaned and trimmed, never rejected.
     utm_source: str | None = Field(default=None, description=f"Trimmed to {UTM_MAX} characters")
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    utm_content: str | None = None
+    referrer_host: str | None = None
+    landing_path: str | None = None
 
     @field_validator("first_name", "last_name")
     @classmethod
     def _names(cls, value: str) -> str:
         return _check_name(value)
 
-    @field_validator("utm_source")
+    @field_validator(
+        "utm_source", "utm_medium", "utm_campaign", "utm_content", "referrer_host", "landing_path"
+    )
     @classmethod
     def _trim_utm(cls, value: str | None) -> str | None:
         # Marketing tags come from links we don't control: clean and trim, never reject
@@ -227,9 +255,28 @@ class IntakeRequest(BaseModel):
     def _lower_email(cls, value: str) -> str:
         return value.lower()
 
+    @model_validator(mode="after")
+    def _fit_the_practice_area(self) -> IntakeRequest:
+        # Ask only what the matter needs: injury questions only in injury areas.
+        if self.practice_area not in compliance.INJURY_AREAS:
+            self.injured = self.medical_treatment = None
+        if self.practice_area != PracticeArea.WORKERS_COMP:
+            self.federal_or_maritime_worker = None
+        elif self.federal_or_maritime_worker is None:
+            raise ValueError(
+                "please say whether you are a federal employee or a longshore, harbor or "
+                "shipyard worker"
+            )
+        # Refused here, before anything is stored: health or immigration details may only
+        # be collected with this separate consent.
+        if self.practice_area in compliance.SENSITIVE_AREAS and not self.sensitive_consent:
+            kind = compliance.SENSITIVE_AREAS[self.practice_area]
+            raise ValueError(f"please agree to sending the {kind} details, or we can't help")
+        return self
+
 
 class IntakeResponse(BaseModel):
-    lead_id: str
+    lead_id: str | None = Field(description="Empty when nothing was kept (closed state)")
     status: LeadStatus
     message: str
     disclosure: str
@@ -319,6 +366,10 @@ class AttorneyOut(AttorneyBase):
 
     id: int
     created_at: datetime
+    license_numbers: dict[str, str] | None = None
+    license_verified_at: datetime | None = None
+    agreement_version: str | None = None
+    agreement_accepted_at: datetime | None = None
 
 
 class TerritoryCreate(BaseModel):
@@ -376,6 +427,7 @@ class OfferView(BaseModel):
     )
     contact: dict[str, Any] | None = None
     notice: str | None = None
+    price_note: str | None = Field(default=None, description="How this offer's price was set")
 
 
 # --------------------------------------------------------------------------- #
@@ -456,3 +508,136 @@ class BillingRunResult(BaseModel):
     period: str
     created: int
     skipped_existing: int
+    not_billed: list[str] = Field(
+        default_factory=list,
+        description="Monthly fees held back because the attorney can't receive leads "
+        "(license check or agreement); staff decide",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The lead marketplace: attorneys set their own bids
+# --------------------------------------------------------------------------- #
+class BidRow(BaseModel):
+    practice_area: PracticeArea
+    label: str
+    my_bid_cents: int | None = Field(description="Empty = not taking leads in this area")
+    auctioned: bool = Field(description="True where leads are sold by auction (ping tree)")
+    floor_cents: int = Field(description="Lowest bid accepted in this practice area")
+    below_floor: bool = Field(description="Your bid is below the lowest accepted: no leads")
+    competing_bidders: int = Field(
+        description="Other active attorneys paying per lead who could get the same leads"
+    )
+    rank: int | None = Field(description="1 = first in line in the auction")
+    to_be_first_cents: int | None = Field(
+        description="A bid that would put you first in line, rounded up to a whole $10 "
+        "so other attorneys' bids stay private. Empty when you're already first."
+    )
+    sold_last_30_days: int
+    average_price_cents: int | None = Field(
+        description="Rounded to $10, and only once at least 5 leads sold, so no single sale "
+        "price (and so no rival's bid) can be worked out from it"
+    )
+    exclusive_territory: bool = Field(description="You rent an exclusive ZIP in this area")
+
+
+class BidsView(BaseModel):
+    attorney_id: int
+    name: str
+    firm: str
+    plan: BillingPlan
+    can_edit: bool = Field(description="False on a subscription: areas are set with staff")
+    blocked: str | None = Field(default=None, description="Why you get no leads right now")
+    pricing_rule: str
+    increment_cents: int
+    max_bid_cents: int
+    areas: list[BidRow]
+
+
+class BidsUpdate(BaseModel):
+    """Only the areas listed change. A number sets the bid, null stops leads in that area."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bids_cents: dict[PracticeArea, StrictInt | None] = Field(min_length=1)
+
+
+class BidLinkOut(BaseModel):
+    sent_to: str
+    link: str | None = Field(default=None, description="Shown only in demo mode")
+
+
+class LicenseCheckIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    license_numbers: dict[str, str] = Field(
+        min_length=1,
+        description='Bar number per state, as shown on the state bar site: {"IL": "6301234"}',
+    )
+
+    @field_validator("license_numbers")
+    @classmethod
+    def _numbers(cls, value: dict[str, str]) -> dict[str, str]:
+        cleaned = {k.strip().upper(): v.strip() for k, v in value.items()}
+        bad = sorted(k for k in cleaned if k not in US_STATES)
+        if bad:
+            raise ValueError(f"not US state codes: {bad}")
+        blank = sorted(k for k, v in cleaned.items() if not v or len(v) > 40)
+        if blank:
+            raise ValueError(f"give the bar number for {blank} (up to 40 characters)")
+        return cleaned
+
+
+class AgreementIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = Field(min_length=1, max_length=40)
+    accepted_at: datetime | None = Field(default=None, description="Defaults to now")
+
+    @field_validator("accepted_at")
+    @classmethod
+    def _aware(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("include a time zone, e.g. 2026-10-15T14:00:00Z")
+        return value
+
+
+class EraseIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    level: Literal["narrative", "full"] = "narrative"
+    reason: str = Field(min_length=3, max_length=200, description='e.g. "deletion request #12"')
+
+
+class HoldIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    on: bool
+    reason: str = Field(min_length=3, max_length=200)
+
+
+class BidChangeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    attorney_id: int
+    at: datetime
+    changes: dict[str, list[int | None]] = Field(description="Practice area: [before, after]")
+
+
+class MarketBidder(BaseModel):
+    attorney_id: int
+    name: str
+    bid_cents: int
+    plan: BillingPlan
+    blocked: str | None = Field(default=None, description="Why they get no leads right now")
+    below_floor: bool = Field(description="Pays per lead but priced below the lowest bid: no leads")
+
+
+class MarketArea(BaseModel):
+    practice_area: PracticeArea
+    label: str
+    model: DistributionModel
+    floor_cents: int
+    bidders: list[MarketBidder]
+    sold_last_30_days: int
+    average_price_cents: int | None

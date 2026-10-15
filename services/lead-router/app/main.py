@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 
 from app import __version__, worker
-from app.api import admin, offers, pages, public
+from app.api import admin, bids, offers, pages, public
 from app.api.pages import STATIC, RevalidatedStaticFiles
 from app.api.ratelimit import SlidingWindowLimiter
 from app.config import Settings, get_settings
@@ -73,7 +73,7 @@ def create_app(
     app.state.handlers = handlers
     app.state.intake_limiter = SlidingWindowLimiter(settings.intake_rate_limit_per_minute)
 
-    for module in (public, offers, admin, pages):
+    for module in (public, offers, bids, admin, pages):
         app.include_router(module.router)
     app.mount("/static", RevalidatedStaticFiles(directory=STATIC), name="static")
     return app

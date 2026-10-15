@@ -1,4 +1,5 @@
-"""The three web pages: intake form (public), offer page (attorneys), dashboard (staff)."""
+"""The web pages: intake form and privacy policy (public), offer and bid pages (attorneys),
+dashboard (staff)."""
 
 from __future__ import annotations
 
@@ -31,9 +32,19 @@ async def intake_page(request: Request) -> Response:
     return await _pages.get_response("intake.html", request.scope)
 
 
+@router.get("/privacy")
+async def privacy_page(request: Request) -> Response:
+    return await _pages.get_response("privacy.html", request.scope)
+
+
 @router.get("/offer/{offer_id}")
 async def offer_page(offer_id: str, request: Request) -> Response:
     return await _pages.get_response("offer.html", request.scope)
+
+
+@router.get("/bids/{attorney_id}")
+async def bids_page(attorney_id: str, request: Request) -> Response:
+    return await _pages.get_response("bids.html", request.scope)
 
 
 @router.get("/admin")
