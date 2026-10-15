@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     )
     # The most attorneys any one inquiry is shared with, in every model. It's also the
     # number written into the consent text, so the two always match.
-    shared_max_attorneys: int = 3
+    shared_max_attorneys: int = Field(default=3, ge=1)
     shared_offer_ttl_seconds: int = 15 * 60
     ping_offer_ttl_seconds: int = 90
     # Lowest bid (in cents) the auction will accept per practice area.

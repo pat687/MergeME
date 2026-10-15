@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Request, Response
 from fastapi.staticfiles import StaticFiles
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -22,18 +21,21 @@ class RevalidatedStaticFiles(StaticFiles):
 
 
 router = APIRouter(include_in_schema=False)
+# The pages go through the same file server as /static, so they get ETags and answer a
+# browser's "has this changed?" check with a 304 instead of the whole page.
+_pages = RevalidatedStaticFiles(directory=STATIC)
 
 
 @router.get("/")
-def intake_page() -> FileResponse:
-    return FileResponse(STATIC / "intake.html", headers=NO_CACHE)
+async def intake_page(request: Request) -> Response:
+    return await _pages.get_response("intake.html", request.scope)
 
 
 @router.get("/offer/{offer_id}")
-def offer_page(offer_id: str) -> FileResponse:
-    return FileResponse(STATIC / "offer.html", headers=NO_CACHE)
+async def offer_page(offer_id: str, request: Request) -> Response:
+    return await _pages.get_response("offer.html", request.scope)
 
 
 @router.get("/admin")
-def admin_page() -> FileResponse:
-    return FileResponse(STATIC / "admin.html", headers=NO_CACHE)
+async def admin_page(request: Request) -> Response:
+    return await _pages.get_response("admin.html", request.scope)

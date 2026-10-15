@@ -16,6 +16,7 @@ reviewed place, not scattered around the code.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable
 
 from app.domain.types import ChargeKind
@@ -35,17 +36,22 @@ _STREET_CAPS_RE = re.compile(
     r"(Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Way|Place|Pl"
     r"|Terrace|Ter|Parkway|Pkwy|Highway|Hwy|Circle|Cir)\b\.?"
 )
-# "In 2019 Family Court ..." is a courtroom, not an address.
+# "In 2019 Family Court ..." is a courtroom, not an address: a year, then a court's name
+# ending in "Court" (never the "Ct" abbreviation, which is a street).
 _COURT_WORDS = frozenset(
     "family divorce circuit county district superior supreme juvenile probate traffic small "
     "claims municipal housing appeals appellate bankruptcy federal state criminal civil drug "
-    "domestic relations tax chancery magistrate justice city".split()
+    "domestic relations tax chancery magistrate justice city immigration common pleas "
+    "surrogate surrogates orphans".split()
 )
-# "I live at 4417 Kedzie": no suffix, but the lead-in makes it an address.
+_YEAR_RE = re.compile(r"(?:19|20)[0-9]{2}\s")
+# "I live at 4417 Kedzie", "lived at 918 n albany", "address is: 88 Wabash": no suffix,
+# but the lead-in makes it an address. A lowercase street name is only taken after a
+# direction letter, so "lived at 2 different places" is left alone.
 _LIVES_AT_RE = re.compile(
-    r"(?i:\b((?:(?:live|lives|living|reside|resides|residing|stay|stays|staying)\s+(?:at|on)"
-    r"|address\s+is|address:)\s+))"
-    r"[0-9]{1,6}(?:\s+(?:[NSEWnsew]\.?(?!\w)|[A-Z][\w'.-]*)){1,3}"
+    r"(?i:\b((?:(?:live|lives|lived|living|reside|resides|resided|residing"
+    r"|stay|stays|stayed|staying)\s+(?:at|on)|address(?:\s+is)?:?)\s+))"
+    r"[0-9]{1,6}(?:\s+[NSEWnsew]\.?(?!\w)(?:\s+[a-z][\w'.-]*)?|\s+[A-Z][\w'.-]*){1,3}"
 )
 # "12 elm st": lowercase only with unambiguous suffixes, and never across everyday words,
 # so "3 blocks down the street" or "2 cars on the way" are left alone.
@@ -76,15 +82,19 @@ def _redact_lower_street(match: re.Match) -> str:
 
 
 def _redact_caps_street(match: re.Match) -> str:
-    words = match.group(1).lower().split()
-    is_court = match.group(2) in ("Court", "Ct") and any(w in _COURT_WORDS for w in words)
+    words = [w.removesuffix("'s").rstrip("'\u2019") for w in match.group(1).lower().split()]
+    is_court = (
+        match.group(2) == "Court"
+        and _YEAR_RE.match(match.group(0)) is not None
+        and words[-1] in _COURT_WORDS
+    )
     return match.group(0) if is_court else REDACTED
 
 
 def _name_parts(name: str) -> list[str]:
     """'Garcia-Lopez' -> ['Garcia-Lopez', 'Garcia', 'Lopez'], longest first."""
     parts: set[str] = set()
-    for token in name.split():
+    for token in re.split(r"[\s,]+", name):
         for piece in [token, *re.split(r"[-'\u2019]", token)]:
             piece = piece.strip(".,-'\u2019")
             if len(piece) >= 2:
@@ -110,7 +120,10 @@ def redact(
     of a hyphenated name. Names that are also everyday words ("Will", "Grant") are
     only removed when capitalized, so the word "will" survives.
     """
-    out = text
+    # Same Unicode form on both sides, or a name typed one way in the form and another
+    # way in the description (e.g. a separately typed accent) wouldn't match.
+    out = unicodedata.normalize("NFC", text)
+    names = [unicodedata.normalize("NFC", n) for n in names]
     if email:
         out = re.sub(re.escape(email), REDACTED, out, flags=re.IGNORECASE)
     out = _EMAIL_RE.sub(REDACTED, out)

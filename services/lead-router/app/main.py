@@ -17,7 +17,7 @@ from app.api import admin, offers, pages, public
 from app.api.pages import STATIC, RevalidatedStaticFiles
 from app.api.ratelimit import SlidingWindowLimiter
 from app.config import Settings, get_settings
-from app.db import Base, make_engine, make_session_factory
+from app.db import Base, make_engine, make_session_factory, upgrade_schema
 from app.services.outbox import Handler
 
 log = logging.getLogger("lead_router")
@@ -47,6 +47,7 @@ def create_app(
 
     engine = make_engine(settings.database_url)
     Base.metadata.create_all(engine)
+    upgrade_schema(engine)
     session_factory = make_session_factory(engine)
     handlers = handlers if handlers is not None else worker.build_handlers(settings)
 

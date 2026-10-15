@@ -46,7 +46,7 @@ How to run, check, back up and fix the stack. Commands are run from the repo roo
 | `make up` says `run make init` | No `.env` | `make init` |
 | Port 8000 (or 8025, or 80) is already in use | Another program has it | Set `ROUTER_HTTP_PORT`, `MAILPIT_UI_PORT` or `EXO_HTTP_PORT` in `.env`. The links in emails follow `ROUTER_HTTP_PORT` automatically, and eXo's links, proxy port and ONLYOFFICE host follow `EXO_HTTP_PORT` (the proxy listens on that port inside Docker too, so eXo and ONLYOFFICE can reach each other; verified on 8088). |
 | Intake returns `429 Too Many Requests` | Per-IP rate limit (default 10 per minute) | Expected under abuse. For load tests, raise `ROUTER_INTAKE_RATE_LIMIT_PER_MINUTE` (or set it to 0). |
-| Behind a reverse proxy, many visitors get `429`, and leads show the same IP (e.g. `172.19.0.1`) | The router doesn't trust the proxy, so every request looks like it comes from one address. Through a published Docker port the router sees the Docker network's gateway, not `127.0.0.1` | Set `ROUTER_TRUSTED_PROXY_IPS` to the address the router sees (see [Behind a reverse proxy](#behind-a-reverse-proxy)) and restart the router |
+| Behind a reverse proxy, many visitors get `429`, and leads show the same IP (e.g. `172.19.0.1`) | The router doesn't trust the proxy, so every request looks like it comes from one address. Through a published Docker port the router sees the Docker network's gateway, not `127.0.0.1` | Set `ROUTER_TRUSTED_PROXY_IPS` to the address the router sees (see [Behind a reverse proxy](#behind-a-reverse-proxy)), then run `make up`. `docker compose restart` keeps the old value |
 | An attorney gets "you can't take this lead right now: daily lead cap reached" | They've accepted `daily_cap` leads since local midnight (`ROUTER_BUSINESS_TIMEZONE`) | Raise their cap with `PATCH /api/v1/admin/attorneys/{id}`, or wait until midnight |
 | An intake is rejected with "consent was given on an outdated form" | `ROUTER_DISCLOSURE_VERSION` changed while their page was open | Expected: they need to reload and agree to the current wording |
 | Image pull fails with `429 Too Many Requests` | Docker Hub anonymous rate limit | `docker login`, wait, or use a mirror (e.g. `mirror.gcr.io/library/postgres:16.15`, then `docker tag` it to the expected name) |
@@ -74,9 +74,28 @@ Which address to list is the address the router *sees* the proxy as:
 | On the host, connecting to the published port | The Docker network's gateway, e.g. `172.19.0.1` (not `127.0.0.1`) | That gateway: `docker network inspect barrgo_default -f '{{(index .IPAM.Config 0).Gateway}}'` |
 | In a container on the same Compose network | That container's address, which can change on restart | The network's subnet, e.g. `172.19.0.0/16` (`... -f '{{(index .IPAM.Config 0).Subnet}}'`) |
 
+After changing it in `.env`, run `make up` so the router container is recreated with the new
+value (`docker compose restart` keeps the old one).
+
 Until this is set, every visitor looks like the proxy: the per-IP limit becomes one limit
 for the whole site and the stored consent IP is the proxy's. When a proxy is in front, also
 publish the router only on loopback (`127.0.0.1:8000:8000`) so nothing can bypass the proxy.
+
+**Pin the network first.** Docker picks the network's address range when it creates it, and
+`make down` removes it, so the next `make up` can land on a different gateway and the trusted
+address silently stops matching. A `docker-compose.override.yml` next to `docker-compose.yml`
+(Compose reads it automatically) fixes the range to one outside Docker's own pools:
+
+```yaml
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.203.57.0/24
+```
+
+Run `make down && make up` once to recreate the network. From then on the gateway is always
+`10.203.57.1` (a proxy on the host) and the subnet `10.203.57.0/24` (a proxy container).
 
 ## Backups and restore
 
@@ -85,22 +104,24 @@ Router (leads, offers, ledger, audit):
 ```bash
 make backup        # prints "Backup FAILED" and exits non-zero if pg_dump didn't finish
 
-# Restore. Check the file is complete first: pg_dump writes this line last.
+# Restore, but only from a file that is intact (gunzip -t) and complete (pg_dump writes
+# "PostgreSQL database dump complete" as its last line).
 f=backups/router-20261015-020000.sql.gz
-gunzip -c "$f" | tail -n 5 | grep -q 'PostgreSQL database dump complete' || echo "INCOMPLETE DUMP: $f"
-
-docker compose stop lead-router lead-worker     # nothing writes while we restore
-set -o pipefail
-gunzip -c "$f" | docker compose exec -T router-db psql -1 -v ON_ERROR_STOP=1 -U router router
-docker compose start lead-router lead-worker
+if gunzip -t "$f" && gunzip -c "$f" | tail -n 5 | grep -q 'PostgreSQL database dump complete'; then
+  docker compose stop lead-router lead-worker     # nothing writes while we restore
+  gunzip -c "$f" | docker compose exec -T router-db psql -1 -v ON_ERROR_STOP=1 -U router router
+  docker compose start lead-router lead-worker
+else
+  echo "NOT RESTORING: $f is damaged or incomplete" >&2
+fi
 ```
 
 The dump includes `DROP ... IF EXISTS` statements, so restoring replaces the current data.
 `-1` runs the restore as one transaction and `ON_ERROR_STOP=1` stops at the first error, so
 a dump that fails part-way rolls back instead of leaving half the tables restored.
-`pipefail` makes a broken `.gz` file fail the command instead of being silently cut short.
-The completeness check matters too: a dump that was cut off at a statement boundary contains
-no error, so on its own `psql` would restore it "successfully" with tables missing.
+The checks before it matter because some bad files contain no error at all: a dump cut off
+at a statement boundary, or a `.gz` that ends early at a line break, would otherwise restore
+"successfully" with tables missing. Both are refused before anything is dropped.
 
 eXo keeps data in three places: MySQL (`exo_db_data`), files (`exo_data`) and the search
 index (`exo_search_data`, which can be rebuilt). Back up the first two together while eXo is stopped:
@@ -117,8 +138,10 @@ docker compose start exo
 1. Read the eXo release notes; back up first.
 2. Change the image tag in `docker-compose.yml` (or `EXO_IMAGE` in `.env`).
 3. `docker compose --profile exo pull && docker compose --profile exo up -d`.
-4. Router: `git pull && make up` (tables are created automatically; add Alembic before the
-   first production schema change, see ARCHITECTURE.md §11).
+4. Router: `git pull && make up`. New tables are created automatically, and the few columns
+   added since the first release are added at startup (`ADDED_COLUMNS` in `app/db.py`). Add
+   Alembic before the first production schema change that isn't a new nullable column (see
+   ARCHITECTURE.md §11).
 
 ## Going to production
 

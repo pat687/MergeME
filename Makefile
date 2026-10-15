@@ -10,7 +10,8 @@ LEADCAPTURE_REF ?= 1.0.0-M42
 # Ports for the printed URLs: a value set in the shell wins, then .env, then the default.
 # Only these are read: including .env wholesale would let it override the shell and hand
 # make's unquoted copies of every value to docker compose.
-env_value = $(shell sed -n 's/^$(1)=//p' .env 2>/dev/null | tail -n 1)
+# Accepts what Compose and the shell accept: "export KEY=8001", spaces, quotes, "# notes".
+env_value = $(shell sed -n -E 's/^[[:space:]]*(export[[:space:]]+)?$(1)[[:space:]]*=[[:space:]]*["'\'']?([0-9]+).*/\2/p' .env 2>/dev/null | tail -n 1)
 ROUTER_HTTP_PORT ?= $(or $(call env_value,ROUTER_HTTP_PORT),8000)
 MAILPIT_UI_PORT ?= $(or $(call env_value,MAILPIT_UI_PORT),8025)
 EXO_HTTP_PORT ?= $(or $(call env_value,EXO_HTTP_PORT),80)

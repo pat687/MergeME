@@ -135,6 +135,7 @@ def process_intake(
         status=LeadStatus.RECEIVED,
         consent_at=now,
         consent_text=compliance.consent_text(settings.platform_name, settings.shared_max_attorneys),
+        max_attorneys=settings.shared_max_attorneys,
         ip_address=meta.ip_address,
         user_agent=(meta.user_agent or "")[:300] or None,
         **inquiry.model_dump(exclude={"website"}),
@@ -201,6 +202,7 @@ def process_intake(
         for offer in created:
             if offer.status == OfferStatus.PENDING:
                 offers.notify_offer(db, settings, lead, offer)
+        offers.close_line_up_if_full(db, settings, lead, now)
 
     outbox.enqueue(db, "email", emails.consumer_receipt(settings, lead))
     db.commit()

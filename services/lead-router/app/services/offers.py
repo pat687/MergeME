@@ -141,6 +141,42 @@ def activate(db: Session, settings: Settings, lead: Lead, offer: Offer, now: dat
     return True
 
 
+def consent_limit(settings: Settings, lead: Lead) -> int:
+    """How many attorneys this person agreed to: the number stored with their consent."""
+    return lead.max_attorneys or settings.shared_max_attorneys
+
+
+def _asked(db: Session, lead: Lead) -> int:
+    # An attorney has been "asked" once their offer was activated (shown to them).
+    return db.scalar(
+        select(func.count()).where(Offer.lead_id == lead.id, Offer.activated_at.is_not(None))
+    )
+
+
+def close_line_up_if_full(db: Session, settings: Settings, lead: Lead, now: datetime) -> None:
+    """Once the consented number of attorneys has been asked, nobody else ever can be:
+    close the rest of the line in one statement, with one audit entry."""
+    asked = _asked(db, lead)
+    if asked < consent_limit(settings, lead):
+        return
+    waiting = db.execute(
+        select(Offer.id, Attorney.name)
+        .join(Attorney, Attorney.id == Offer.attorney_id)
+        .where(Offer.lead_id == lead.id, Offer.status == OfferStatus.QUEUED)
+        .order_by(Offer.round)
+    ).all()
+    if not waiting:
+        return
+    reason = f"line-up full ({asked} attorneys asked)"
+    db.execute(
+        update(Offer)
+        .where(Offer.id.in_([offer_id for offer_id, _ in waiting]))
+        .where(Offer.status == OfferStatus.QUEUED)
+        .values(status=OfferStatus.SKIPPED, responded_at=now, decline_reason=reason)
+    )
+    audit.record(db, lead.id, "line_up_full", reason=reason, not_asked=[n for _, n in waiting])
+
+
 def advance(db: Session, settings: Settings, lead: Lead, now: datetime) -> None:
     """After a decline, timeout or skip: ask the next attorney, or give up if no one is left."""
     if lead.status != LeadStatus.OFFERED:
@@ -152,12 +188,10 @@ def advance(db: Session, settings: Settings, lead: Lead, now: datetime) -> None:
         return
 
     if lead.distribution_model == DistributionModel.PING_TREE:
-        counts = accepted_today(db, settings, now)
-        # The consent covers N attorneys. Count the ones actually asked, so an attorney
+        # The consent covers N attorneys. Only attorneys actually asked count, so one
         # skipped below (never shown the lead) doesn't use up a place.
-        asked = db.scalar(
-            select(func.count()).where(Offer.lead_id == lead.id, Offer.activated_at.is_not(None))
-        )
+        close_line_up_if_full(db, settings, lead, now)
+        counts = accepted_today(db, settings, now)
         queued = db.scalars(
             select(Offer)
             .where(Offer.lead_id == lead.id, Offer.status == OfferStatus.QUEUED)
@@ -166,9 +200,7 @@ def advance(db: Session, settings: Settings, lead: Lead, now: datetime) -> None:
         for nxt in queued:
             attorney = db.get(Attorney, nxt.attorney_id)
             # Things may have changed since the line-up was made.
-            if asked >= settings.shared_max_attorneys:
-                reason = f"line-up full ({asked} attorneys already asked)"
-            elif not attorney.active:
+            if not attorney.active:
                 reason = "inactive"
             elif counts.get(attorney.id, 0) >= attorney.daily_cap:
                 reason = "daily lead cap reached"
@@ -196,6 +228,7 @@ def advance(db: Session, settings: Settings, lead: Lead, now: datetime) -> None:
                 audit.record(
                     db, lead.id, "offer_activated", attorney=attorney.name, round=nxt.round
                 )
+                close_line_up_if_full(db, settings, lead, now)
                 return
 
     went_unsold = db.execute(

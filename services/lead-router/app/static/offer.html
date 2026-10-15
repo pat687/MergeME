@@ -146,6 +146,8 @@
     } catch (err) {
       stopTimer();
       fill(view, h("p", { class: "error" }, err.message));
+      announced = null;  // a later successful load announces its status again
+      status.textContent = err.message;  // screen readers hear the failure, not silence
     }
   }
   load();

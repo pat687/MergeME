@@ -86,6 +86,7 @@ ZIP_PLUS4_RE = re.compile(r"^([0-9]{5})(?:[- ]?[0-9]{4})?\Z")  # 60614, 60614-12
 # Commas for "Smith, Jr."; zero-width (non-)joiners are part of how some scripts are typed.
 NAME_PUNCTUATION = frozenset(" '-.,\u2019\u200c\u200d")
 UTM_MAX = 120
+NAME_MAX = 80  # matches the String(80) columns
 
 
 def _digits(value: str) -> str:
@@ -105,6 +106,8 @@ def _check_name(value: str) -> str:
     send into a convincing phishing message.
     """
     value = unicodedata.normalize("NFC", value)
+    if len(value) > NAME_MAX:  # NFC can lengthen a few letters, so check again
+        raise ValueError(f"must be {NAME_MAX} characters or fewer")
     if not any(ch.isalpha() for ch in value) or not all(
         _is_letter_or_mark(ch) or ch in NAME_PUNCTUATION for ch in value
     ):
@@ -112,6 +115,13 @@ def _check_name(value: str) -> str:
     if re.search(r"\.[^\W\d_]", value):  # "J. R. Smith" is fine, "barrgo-login.net" isn't
         raise ValueError("a period must be followed by a space")
     return value
+
+
+def clean_text(value: str) -> str:
+    """Free text as stored: NFC form, and no control characters other than line breaks
+    and tabs (Postgres can't store NUL, and the rest only hide text)."""
+    value = unicodedata.normalize("NFC", value)
+    return "".join(ch for ch in value if ch in "\n\r\t" or unicodedata.category(ch) != "Cc")
 
 
 def _check_states(value: list[str]) -> list[str]:
@@ -143,8 +153,8 @@ class IntakeRequest(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    first_name: str = Field(min_length=1, max_length=80)
-    last_name: str = Field(min_length=1, max_length=80)
+    first_name: str = Field(min_length=1, max_length=NAME_MAX)
+    last_name: str = Field(min_length=1, max_length=NAME_MAX)
     email: EmailStr
     phone: str = Field(description="US phone number, any common format")
     zip_code: str
@@ -170,8 +180,15 @@ class IntakeRequest(BaseModel):
     @field_validator("utm_source")
     @classmethod
     def _trim_utm(cls, value: str | None) -> str | None:
-        # Marketing tags come from links we don't control: trim, never reject the person.
-        return value[:UTM_MAX] if value else None
+        # Marketing tags come from links we don't control: clean and trim, never reject
+        # the person. (A NUL from "%00" would otherwise make Postgres refuse the row.)
+        cleaned = "".join(ch for ch in value or "" if unicodedata.category(ch)[0] != "C")
+        return cleaned[:UTM_MAX] or None
+
+    @field_validator("description")
+    @classmethod
+    def _clean_description(cls, value: str) -> str:
+        return clean_text(value)
 
     @field_validator("phone")
     @classmethod
@@ -326,6 +343,11 @@ class TerritoryOut(TerritoryCreate):
 class OfferAction(BaseModel):
     token: str
     reason: str | None = Field(default=None, max_length=200)
+
+    @field_validator("reason")
+    @classmethod
+    def _clean_reason(cls, value: str | None) -> str | None:
+        return clean_text(value) if value else value
 
 
 class OfferView(BaseModel):

@@ -64,8 +64,13 @@
   let selected = null;
   let lastRows = "";
 
-  // After a re-render, put focus back where it was without scrolling the page
-  // (a plain .focus() jumps the page back to that element every 5 seconds on a phone).
+  // Re-rendering must not move the page. Two things would: removing the element that
+  // has focus (the browser re-anchors its scroll position, often a few hundred pixels
+  // away), and a plain .focus() afterwards (it scrolls to that element). So: let go of
+  // focus before re-rendering, then put it back without scrolling.
+  function letGo() {
+    document.activeElement?.blur?.();
+  }
   function refocus(el) {
     el?.focus({ preventScroll: true });
   }
@@ -107,6 +112,7 @@
     if (rows !== lastRows) {
       lastRows = rows;
       const focusedId = document.activeElement?.closest?.("#rows") ? document.activeElement.dataset.id : null;
+      if (focusedId) letGo();
       fill(document.getElementById("rows"), leads.map((l) =>
         h("tr", { class: l.id === selected ? "selected" : "", "data-id": l.id, onclick: () => showLead(l.id) },
           h("td", {}, h("button", {
@@ -156,6 +162,9 @@
       if (json === lastDetail || selecting) return;
     }
     lastDetail = json;
+    // The offers table scrolls sideways on a phone; keep it where it was.
+    const sideways = [...panel.querySelectorAll(".table-wrap")].map((w) => w.scrollLeft);
+    if (had) letGo();
     const factors = d.score_breakdown.map((f) => h("div", { class: "factor" },
       h("div", {}, h("div", {}, f.reason),
         h("div", { class: `bar ${f.points < 0 ? "neg" : ""}`, style: `width:${Math.min(100, Math.abs(f.points) * 3)}%` })),
@@ -179,6 +188,7 @@
         h("div", {}, h("strong", {}, label(a.event)), " ", h("span", { class: "when" }, when(a.at))),
         Object.keys(a.detail).length ? h("pre", { class: "detail" }, describe(a.detail)) : null))),
     );
+    panel.querySelectorAll(".table-wrap").forEach((w, i) => (w.scrollLeft = sideways[i] ?? 0));
     if (had) {
       const again = focusables();
       refocus(again.find((el) => hadHref && el.getAttribute("href") === hadHref) ?? again[hadIndex] ?? panel.querySelector("h2"));
