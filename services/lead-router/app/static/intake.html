@@ -80,7 +80,14 @@
   const error = document.getElementById("error");
   let meta = null;
 
-  // Plain-English messages per field instead of raw validation text.
+  // Plain-English messages per field instead of raw validation text. When our own
+  // check explains what's wrong (e.g. "a period must be followed by a space"), that
+  // reason is shown instead, so the message never contradicts what the person typed.
+  const OWN_REASONS = new Set(["first_name", "last_name", "phone", "zip_code", "state"]);
+  const sentence = (text) => {
+    const s = text.replace(/^Value error, /, "");
+    return `${s.charAt(0).toUpperCase()}${s.slice(1)}${/[.)]$/.test(s) ? "" : "."}`;
+  };
   const FRIENDLY = {
     first_name: "Please enter your first name (letters only).",
     last_name: "Please enter your last name (letters only).",
@@ -112,8 +119,12 @@
       input.dataset.describedby = input.getAttribute("aria-describedby") || "";
       input.setAttribute("aria-invalid", "true");
       input.setAttribute("aria-describedby", `${id} ${input.dataset.describedby}`.trim());
+      const message = f.type === "value_error" && OWN_REASONS.has(name)
+        ? sentence(f.msg) : FRIENDLY[name] || "Please check this field.";
+      // aria-hidden keeps the message out of the label's name; aria-describedby above
+      // still reads it, so screen readers hear it once, after the field's name.
       (input.closest("label") || input.parentElement)
-        .append(h("span", { class: "field-error", id }, FRIENDLY[name] || "Please check this field."));
+        .append(h("span", { class: "field-error", id, "aria-hidden": "true" }, message));
       first ??= input;
     }
     first?.focus();

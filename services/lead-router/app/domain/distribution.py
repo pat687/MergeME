@@ -6,11 +6,14 @@ Three ways, like three ways of giving out a job:
                automatically, nobody else is asked.
 * Shared     - Up to N attorneys are asked at the same time. The first one to
                claim it wins ("speed to lead").
-* Ping tree  - Up to N attorneys are lined up by how much they bid. The top bidder
-               is asked first; if they pass or time runs out, the next one is asked.
+* Ping tree  - Everyone above the price floor is lined up by how much they bid. The
+               top bidder is asked first; if they pass or time runs out, the next
+               one is asked, until N attorneys have been asked.
 
 N is the number of attorneys the consumer agreed to in the consent text, so no
-model ever shares an inquiry with more attorneys than that.
+model ever shares an inquiry with more attorneys than that. For the ping tree the
+limit is applied when each attorney is asked (see offers.advance), so someone who
+is skipped because they went inactive doesn't use up one of the N places.
 
 This module only *plans*. It returns a list of offers to create and never
 writes to the database, which keeps the business rules readable and testable.
@@ -125,12 +128,10 @@ def _ping_tree(
             bidders.append(c)
 
     # Highest bid first; ties go to whoever has had fewer leads today.
+    # Everyone stays in line; offers.advance stops after max_recipients have been asked.
     ranked = sorted(
         bidders, key=lambda c: (-c.bid_for(practice_area), c.accepted_today, c.attorney_id)
     )
-    ranked, overflow = ranked[:max_recipients], ranked[max_recipients:]
-    for c in overflow:
-        skipped[c.attorney_id] = f"line-up already full ({max_recipients} attorneys)"
     offers = [
         OfferSpec(
             c.attorney_id,
@@ -140,6 +141,10 @@ def _ping_tree(
         )
         for position, c in enumerate(ranked, start=1)
     ]
+    asked = min(len(offers), max_recipients)
     return DistributionPlan(
-        DistributionModel.PING_TREE, offers, skipped, f"{len(offers)} bidders lined up by bid"
+        DistributionModel.PING_TREE,
+        offers,
+        skipped,
+        f"{len(offers)} bidders lined up by bid; at most {asked} will be asked",
     )

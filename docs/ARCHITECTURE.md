@@ -227,9 +227,15 @@ sequenceDiagram
     R->>J: activate round 2, offer email, 90s
     Note over J: no answer
     W->>R: expire_due(now): round 2 expired
-    R->>S: activate round 3 (skipped if inactive or capped, never past the consented 3)
+    R->>S: activate round 3 (skipped if inactive or capped)
     S->>R: accept -> assigned, charged $70
 ```
+
+Every bidder above the floor joins the line, but `offers.advance` stops once as many
+attorneys have been *asked* (`activated_at` set) as the consent text allows. Attorneys
+skipped while waiting in line were never shown the lead, so they don't count, and the
+next bidder gets their place. Anyone still queued when the limit is reached is marked
+`skipped` with the reason "line-up full".
 
 ## 6. Concurrency design
 
@@ -309,7 +315,7 @@ for building eXo with the add-on and the version-matching caveat.
 | Consumer PII | Name, phone and email withheld until accepted; the description is redacted (names, phones, emails, street addresses) in previews and offer emails |
 | XSS | Pages build DOM with `textContent` only; no `innerHTML` with user data |
 | Bots and abuse | Honeypot field, link-spam and disposable-domain checks, names limited to letters with no domain-like periods, receipts that contain no submitted text, per-IP intake rate limit |
-| Consent IP | Uvicorn honors `X-Forwarded-For` only from `FORWARDED_ALLOW_IPS` (default 127.0.0.1); the stored value must parse as an IP |
+| Consent IP | Uvicorn honors `X-Forwarded-For` only from `FORWARDED_ALLOW_IPS` (`ROUTER_TRUSTED_PROXY_IPS`, default 127.0.0.1; through a published Docker port the router sees the network gateway instead, see the RUNBOOK); the stored value must parse as an IP |
 | Secrets | `make init` generates random values into `.env` (mode 600); compose refuses to start without them |
 | Container | Multi-stage build, non-root user (uid 10001), health checks |
 | Timestamps | Stored as UTC; naive datetimes are refused at the database boundary |

@@ -47,7 +47,7 @@ Attorneys will call and text consumers, so consent evidence matters.
 | Explicit opt-in | Unchecked checkbox. The server rejects any lead without `consent=true` (`scrubbing.scrub`). |
 | Exact wording stored | `leads.consent_text` stores the full sentence the person agreed to, plus `consent_version`. A submission whose version doesn't match the wording currently shown is rejected ("please reload"), so the two always agree. |
 | When and from where | `consent_at`, `ip_address`, `user_agent` are stored on the lead. The IP comes from the connection itself; `X-Forwarded-For` is honored only from configured proxies (`ROUTER_TRUSTED_PROXY_IPS`), so a submitter can't choose it. |
-| Bounded sharing | The consent names the maximum number of attorneys (`ROUTER_SHARED_MAX_ATTORNEYS`). Every model respects it: shared offers go to at most that many, and the ping-tree line-up is cut at that many. Every attorney who received the lead is in its audit trail. |
+| Bounded sharing | The consent names the maximum number of attorneys (`ROUTER_SHARED_MAX_ATTORNEYS`). Every model respects it: shared offers go to at most that many, and the ping tree stops after asking that many (an attorney skipped while waiting in line, e.g. for going inactive, was never shown the lead and doesn't count). Every attorney who received the lead is in its audit trail. |
 | Not a condition of purchase | Included in the consent text. |
 
 Notes for counsel:

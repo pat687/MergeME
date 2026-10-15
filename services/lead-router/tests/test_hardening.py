@@ -159,12 +159,58 @@ def test_every_model_respects_the_consented_number_of_attorneys(client, settings
             },
             headers=ADMIN,
         )
-    created = submit(client, 1)
-    assert len(lead_offers(client, created["lead_id"])) == settings.shared_max_attorneys
     assert (
         f"up to {settings.shared_max_attorneys}"
         in client.get("/api/v1/meta").json()["consent_text"]
     )
+    # Shared: never more simultaneous offers than the consent allows.
+    shared = submit(client, 1, **FAMILY)
+    assert len(lead_offers(client, shared["lead_id"])) <= settings.shared_max_attorneys
+
+    # Ping tree: everyone lines up, but only N are ever asked; then the lead goes unsold.
+    lead_id = submit(client, 2)["lead_id"]
+    asked = []
+    while pending := [o for o in lead_offers(client, lead_id).values() if o["status"] == "pending"]:
+        asked.append(pending[0]["attorney_id"])
+        assert act(client, pending[0], "decline").status_code == 200
+    line = lead_offers(client, lead_id).values()
+    assert len(asked) == settings.shared_max_attorneys
+    assert sum("line-up full" in (o["decline_reason"] or "") for o in line) == 7 - len(asked)
+    detail = client.get(f"/api/v1/admin/leads/{lead_id}", headers=ADMIN).json()
+    assert detail["status"] == "unsold"
+
+
+def test_ping_tree_attorney_skipped_while_queued_does_not_use_up_a_place(client, settings):
+    for n in range(2):
+        client.post(
+            "/api/v1/admin/attorneys",
+            json={
+                "name": f"Late Bidder {n}",
+                "firm": "Example Firm (Demo)",
+                "email": f"late{n}@example.com",
+                "bar_states": ["IL"],
+                "service_zips": ["606"],
+                "bids_cents": {"personal_injury": 6000 + n},
+            },
+            headers=ADMIN,
+        )
+    lead_id = submit(client, 1)["lead_id"]  # line-up: Avery, Jordan, Sam, Late 1, Late 0
+    jordan = attorney_id(client, "Jordan Reyes")
+    client.patch(f"/api/v1/admin/attorneys/{jordan}", json={"active": False}, headers=ADMIN)
+    for name in ("Avery Stone", "Sam Okafor", "Late Bidder 1"):
+        offer = lead_offers(client, lead_id)[name]
+        assert offer["status"] == "pending", name
+        assert act(client, offer, "decline").status_code == 200
+    line = lead_offers(client, lead_id)
+    assert (line["Jordan Reyes"]["status"], line["Jordan Reyes"]["decline_reason"]) == (
+        "skipped",
+        "inactive",
+    )
+    assert line["Late Bidder 0"]["status"] == "skipped"
+    assert "line-up full" in line["Late Bidder 0"]["decline_reason"]
+    late = line["Late Bidder 0"]
+    view = client.get(f"/api/v1/offers/{late['id']}", headers={"X-Offer-Token": token(late["id"])})
+    assert "agreed number of attorneys" in view.json()["notice"]
 
 
 def test_consent_given_on_an_old_form_version_is_rejected(client):
@@ -214,8 +260,23 @@ def test_redaction_catches_lowercase_names_addresses_and_dashed_phones():
         assert secret not in out.lower()
 
 
+def test_redaction_catches_hyphenated_names_slashed_phones_and_bare_addresses():
+    text = (
+        "garcia and Lopez here (Jamie Garcia-Lopez). Call 312/555/0142 or 3 1 2 5 5 5 0 1 4 2. "
+        "I live at 4417 N Kedzie, my address is 88 Wabash Ave."
+    )
+    out = compliance.redact(text, names=["Jamie", "Garcia-Lopez"], phone="3125550142")
+    for secret in ("garcia", "lopez", "jamie", "0142", "0 1 4 2", "4417", "kedzie", "wabash"):
+        assert secret not in out.lower(), (secret, out)
+
+
 def test_redaction_leaves_everyday_phrases_with_numbers_alone():
     text = "I was hit by 3 cars on the way home, 2 blocks down the street."
+    assert compliance.redact(text, names=["Jo", "Smith"]) == text
+
+
+def test_redaction_leaves_courts_and_doctor_visits_alone():
+    text = "In 2019 Family Court gave me custody. Since then I've had 6 Dr appointments."
     assert compliance.redact(text, names=["Jo", "Smith"]) == text
 
 
@@ -230,6 +291,18 @@ def test_offer_links_keep_the_token_out_of_server_logs(client):
     created = submit(client, 1)
     link = lead_offers(client, created["lead_id"])["Avery Stone"]["link"]
     assert "#t=" in link and "?t=" not in link
+
+
+def test_pages_cached_before_the_header_switch_still_load_offers(client):
+    offer = lead_offers(client, submit(client, 1)["lead_id"])["Avery Stone"]
+    old_style = client.get(f"/api/v1/offers/{offer['id']}?t={token(offer['id'])}")
+    assert old_style.status_code == 200
+    assert client.get(f"/api/v1/offers/{offer['id']}").status_code == 404
+
+
+@pytest.mark.parametrize("path", ["/", "/admin", "/offer/x", "/static/common.js"])
+def test_pages_and_scripts_are_revalidated_after_a_release(client, path):
+    assert client.get(path).headers["cache-control"] == "no-cache"
 
 
 def test_pending_offer_view_reports_server_side_time_left(client):
@@ -257,15 +330,34 @@ def test_names_cannot_carry_links_emails_or_digits(client, name):
     assert client.post("/api/v1/intake", json=inquiry_data(first_name=name)).status_code == 422
 
 
-@pytest.mark.parametrize("name", ["O'Brien-Smith Jr.", "José", "Nguyễn", "J. R. Smith"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "O'Brien-Smith Jr.",
+        "José",
+        "Nguyễn",
+        "J. R. Smith",
+        "Smith, Jr.",
+        "प्रिया",  # Devanagari: the vowel sign and virama are combining marks
+        "முருகன்",  # Tamil
+        "\u0645\u06cc\u200c\u0646\u0627",  # Persian, typed with a zero-width non-joiner
+    ],
+)
 def test_real_names_are_accepted(name):
     assert inquiry(first_name=name).first_name == name
+
+
+def test_names_typed_with_separate_accents_are_normalized():
+    assert inquiry(first_name="Jose\u0301").first_name == "Jos\u00e9"
 
 
 @pytest.mark.parametrize(
     ("raw", "ok"),
     [
         ("60614-1234", True),
+        ("606141234", True),
+        ("60614 1234", True),
+        ("60614-123", False),
         ("606141", False),
         ("60614abc", False),
         ("\u0666\u0660\u0666\u0660\u0661", False),  # Arabic-Indic digits
@@ -436,3 +528,9 @@ def test_shared_offers_still_expire_after_ttl(client, settings, db):
     assert offers.expire_due(db, settings, later) == 3
     assert db.get(Lead, created["lead_id"]).status == "unsold"
     assert db.query(Offer).filter_by(lead_id=created["lead_id"], status="expired").count() == 3
+
+
+def test_long_marketing_tags_are_trimmed_not_rejected(client, db):
+    r = client.post("/api/v1/intake", json=inquiry_data(utm_source="x" * 300))
+    assert r.status_code == 201, r.text
+    assert db.get(Lead, r.json()["lead_id"]).utm_source == "x" * 120

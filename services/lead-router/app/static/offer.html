@@ -13,7 +13,9 @@
     <h1>Lead offer</h1>
     <span class="tag">For participating attorneys</span>
   </header>
-  <div id="view" class="card" aria-live="polite"><p class="muted">Loading...</p></div>
+  <div id="view" class="card"><p class="muted">Loading...</p></div>
+  <!-- Screen readers hear status changes from here, not the ticking countdown. -->
+  <p id="status" class="sr-only" role="status"></p>
   <p class="small muted">You decide whether to take on any matter. Contact details are shared only after you accept.</p>
 </main>
 
@@ -23,11 +25,14 @@
   const offerId = location.pathname.split("/").pop();
   // The token lives after '#', which browsers never send to the server (so it can't
   // end up in access logs). Older links used '?t='; move those into the fragment.
-  const params = new URLSearchParams(location.hash.slice(1) || location.search);
-  const token = params.get("t") || "";
-  if (location.search) history.replaceState(null, "", `${location.pathname}#t=${token}`);
+  const fromHash = new URLSearchParams(location.hash.slice(1)).get("t");
+  const fromQuery = new URLSearchParams(location.search).get("t");
+  const token = fromHash || fromQuery || "";
+  if (fromQuery) history.replaceState(null, "", `${location.pathname}#t=${encodeURIComponent(token)}`);
 
   const view = document.getElementById("view");
+  const status = document.getElementById("status");
+  let announced = null;
   const getOffer = () => api(`/api/v1/offers/${offerId}`, { headers: { "X-Offer-Token": token } });
   let timer = null;
   let retry = null;
@@ -76,22 +81,38 @@
     }
   }
 
-  // Passing can't be undone, so ask first. Cancel really cancels.
+  // Passing can't be undone, so ask first. Cancel (or Escape) really cancels and
+  // puts focus back on the Pass button; Enter in the reason box confirms.
   function confirmPass() {
     if (view.querySelector("#pass_reason")) return;
     const reason = h("input", { id: "pass_reason", maxlength: "200", placeholder: "e.g. conflict, too busy" });
-    const box = h("div", { class: "notice", role: "group", "aria-label": "Confirm pass" },
+    const confirm = () => act("decline", reason.value.trim() || null);
+    const cancel = () => {
+      box.remove();
+      view.querySelector("#pass")?.focus();
+    };
+    const box = h("div", {
+      class: "notice", role: "group", "aria-label": "Confirm pass",
+      onkeydown: (e) => {
+        if (e.key === "Escape") { e.preventDefault(); cancel(); }
+        if (e.key === "Enter" && e.target === reason) { e.preventDefault(); confirm(); }
+      },
+    },
       h("label", { for: "pass_reason" }, "Why are you passing? (optional)"),
       reason,
       h("div", { class: "actions" },
-        h("button", { class: "danger", onclick: () => act("decline", reason.value.trim() || null) }, "Yes, pass on this lead"),
-        h("button", { class: "secondary", onclick: () => box.remove() }, "Cancel")));
+        h("button", { class: "danger", onclick: confirm }, "Yes, pass on this lead"),
+        h("button", { class: "secondary", onclick: cancel }, "Cancel")));
     view.querySelector(".actions")?.after(box);
     reason.focus();
   }
 
   function render(o) {
     if (o.status !== "pending") stopTimer();
+    if (o.status !== announced) {
+      announced = o.status;
+      status.textContent = o.notice;
+    }
     const facts = [
       ["Practice area", label(o.practice_area)],
       ["Location", `${o.zip_code}, ${o.state}`],
@@ -114,7 +135,7 @@
         h("p", {}, o.contact.description)) : null,
       o.status === "pending" ? h("div", { class: "actions" },
         h("button", { onclick: () => act("accept") }, "Accept lead"),
-        h("button", { class: "secondary", onclick: confirmPass }, "Pass")) : null,
+        h("button", { class: "secondary", id: "pass", onclick: confirmPass }, "Pass")) : null,
       o.expires_at ? h("p", { class: "small muted" }, `Offer deadline: ${when(o.expires_at)}`) : null,
     );
   }

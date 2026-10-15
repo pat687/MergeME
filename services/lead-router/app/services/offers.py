@@ -153,6 +153,11 @@ def advance(db: Session, settings: Settings, lead: Lead, now: datetime) -> None:
 
     if lead.distribution_model == DistributionModel.PING_TREE:
         counts = accepted_today(db, settings, now)
+        # The consent covers N attorneys. Count the ones actually asked, so an attorney
+        # skipped below (never shown the lead) doesn't use up a place.
+        asked = db.scalar(
+            select(func.count()).where(Offer.lead_id == lead.id, Offer.activated_at.is_not(None))
+        )
         queued = db.scalars(
             select(Offer)
             .where(Offer.lead_id == lead.id, Offer.status == OfferStatus.QUEUED)
@@ -161,10 +166,30 @@ def advance(db: Session, settings: Settings, lead: Lead, now: datetime) -> None:
         for nxt in queued:
             attorney = db.get(Attorney, nxt.attorney_id)
             # Things may have changed since the line-up was made.
-            if not attorney.active or counts.get(attorney.id, 0) >= attorney.daily_cap:
-                if _set_status(db, nxt, OfferStatus.QUEUED, OfferStatus.SKIPPED, responded_at=now):
+            if asked >= settings.shared_max_attorneys:
+                reason = f"line-up full ({asked} attorneys already asked)"
+            elif not attorney.active:
+                reason = "inactive"
+            elif counts.get(attorney.id, 0) >= attorney.daily_cap:
+                reason = "daily lead cap reached"
+            else:
+                reason = None
+            if reason:
+                if _set_status(
+                    db,
+                    nxt,
+                    OfferStatus.QUEUED,
+                    OfferStatus.SKIPPED,
+                    responded_at=now,
+                    decline_reason=reason,
+                ):
                     audit.record(
-                        db, lead.id, "offer_skipped", attorney=attorney.name, round=nxt.round
+                        db,
+                        lead.id,
+                        "offer_skipped",
+                        attorney=attorney.name,
+                        round=nxt.round,
+                        reason=reason,
                     )
                 continue
             if activate(db, settings, lead, nxt, now):
@@ -377,5 +402,11 @@ def view(db: Session, settings: Settings, offer_id: str, token: str, now: dateti
         expires_at=offer.expires_at,
         seconds_left=seconds_left,
         contact=contact,
-        notice=NOTICES[OfferStatus(offer.status)],
+        notice=_notice(offer),
     )
+
+
+def _notice(offer: Offer) -> str:
+    if offer.status == OfferStatus.SKIPPED and (offer.decline_reason or "").startswith("line-up"):
+        return "This lead was offered to the agreed number of attorneys before your turn came."
+    return NOTICES[OfferStatus(offer.status)]
