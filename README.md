@@ -183,7 +183,7 @@ Step 2. Why did Jamie's lead get the grade it got?
    +10  has a valid phone number and email
   = 85/100, tier A
 
-Step 3. Ping tree: the highest bidder gets the first chance
+Step 3. Ping tree: the highest bidder gets the first chance, the market sets the price
   round 1: Avery Stone   $ 81.00  pending
   round 2: Jordan Reyes  $ 71.00  queued
   round 3: Sam Okafor    $ 50.00  queued
@@ -195,7 +195,7 @@ Step 5. Shared: three attorneys are asked at once, first to click wins
 
 Step 6. Billing: flat fees only
   Avery Stone   $   750.00   (included, territory)
-  Jordan Reyes  $    80.00   (per_lead)
+  Jordan Reyes  $    71.00   (per_lead)
   Morgan Lee    $   500.00   (subscription)
   Riley Chen    $    35.00   (per_lead)
 ```
@@ -224,7 +224,7 @@ That's why the business rules read like a spec and test in milliseconds.
 |---|---|---|---|---|
 | **Exclusive** | An attorney rents this ZIP + practice area | Only the owner | Owner, instantly | Included in the monthly territory fee |
 | **Shared** (speed to lead) | Default for most practice areas | Up to 3 at once, fewest-leads-today first | First to accept | Each attorney's own flat price |
-| **Ping tree** | Personal injury, med-mal, workers' comp | Up to 3, one at a time, highest bid first | First "yes" down the line | Market price: $1 above the next bid (or the floor), never more than the winner's bid |
+| **Ping tree** | Personal injury, med-mal, workers' comp | Up to 3, one at a time, highest bid first (subscribers after every paying bidder) | First "yes" down the line | Market price: $1 above the next bid (or the floor), never more than the winner's bid |
 
 "Up to 3" is the number the consumer agrees to in the consent text, and no model ever
 goes past it. In the ping tree the limit counts attorneys actually asked, so someone who
@@ -234,9 +234,14 @@ accepts, not just when the offer goes out.
 **Attorneys set their own bids.** Each attorney gets a private, signed link to a bid page
 (`/bids/{id}`; staff send it from the dashboard's Market panel or
 `POST /api/v1/admin/attorneys/{id}/bid-link`). For every practice area it shows their place
-in line, the bid that would put them first, the lowest bid accepted and what leads sold for in
-the last 30 days, and lets them change their bids. Offer emails link back to it. Auction
-rules (`ROUTER_AUCTION_PRICING`, `ROUTER_BID_INCREMENT_CENTS`) are configurable.
+in line, a bid that would put them first (rounded up to a whole $10, so nobody sees a rival's
+exact bid), the lowest bid accepted and what leads sold for in the last 30 days, and lets them
+change their bids. Every practice area has a lowest bid (`ROUTER_FLOOR_PRICE_CENTS`), in
+set-price areas too, so no attorney paying per lead can set a $0 price. Sending a new link
+turns off the old one, and links stop working when an attorney is deactivated. Subscribers
+see the page but can't bid: a bid would cost them nothing, so in auctions they're asked
+after every paying bidder and never set anyone's price. Auction rules
+(`ROUTER_AUCTION_PRICING`, `ROUTER_BID_INCREMENT_CENTS`) are configurable.
 
 All of it is configurable in `.env` (`ROUTER_DISTRIBUTION_POLICY`,
 `ROUTER_SHARED_MAX_ATTORNEYS`, time limits, floor prices, business timezone). No code changes needed.

@@ -31,7 +31,7 @@ The software is built around that model:
 | Every charge is whole, non-negative cents | Single gate `assert_flat_fee` on every ledger insert | [`domain/compliance.py`](../services/lead-router/app/domain/compliance.py) | `test_ledger_gate_refuses_anything_but_flat_non_negative_cents` |
 | Percentage pricing can't sneak in through the API | Attorney schemas use `extra="forbid"`: a `fee_percent` field is rejected with 422 | [`schemas.py`](../services/lead-router/app/schemas.py) `AttorneyBase` | `test_percentage_pricing_cannot_even_be_submitted` |
 | **Price doesn't depend on case outcome** | Charges happen at delivery (accept, or exclusive assignment). There is no endpoint to report retention, settlement or recovery. | [`services/billing.py`](../services/lead-router/app/services/billing.py) | `test_ping_tree_walks_down_the_line...` (charge on accept) |
-| **Neutral, disclosed selection.** Bar opinions that allow per-lead fees require the order to be mechanical and disclosed | Auctioned leads go to attorneys in bid order, with the price set by a published rule (one increment above the next bid, never above your own). The rule is stated on every offer and on each attorney's bid page; consumers are never told an attorney was chosen for them | `distribution._ping_tree`, `market.price_note`, `bids.pricing_rule` | `test_market.py` |
+| **Neutral, disclosed selection.** Opinions that allow paying a lead generator ask that attorneys be chosen by neutral, mechanical criteria that are disclosed, without a recommendation, and for a fee that doesn't depend on retention ([NYSBA Op. 1131](https://nysba.org/ethics-opinion-1131/) (2017), [NYSBA Op. 1294](https://nysba.org/ethics-opinion-1294-solicitation-advertisement-lead-generators/) (2026)). [WSBA Advisory Op. 201401](https://ao.wsba.org/print.aspx?ID=1680) adds that the service must clearly tell the *consumer* the match rests only on stated objective information | **Partly met.** Who can receive a lead is decided only by objective facts (state, ZIP, practice area, capacity), and the order by a mechanical rule: highest paying bid first, then subscribers. The price rule is written on every offer (saved with it) and on each attorney's bid page. **Open for counsel:** the consumer disclosure says attorneys pay a flat fee and that nobody is recommended, but it doesn't yet say *how* attorneys are chosen, or that in some practice areas attorneys who pay more are contacted first. See "Notes for counsel" below | `distribution._ping_tree`, `market.price_note`, `bids.pricing_rule`, `compliance.disclosure()` | `test_market.py` (attorney-facing rule and order); consumer side not yet covered |
 | **No recommending.** Don't imply we chose the "best" lawyer | Consumer text says attorneys *pay*, that we *do not recommend* any attorney, and that we *have not evaluated* the matter. | `compliance.disclosure()`, `consumer_message()`, `consent_text()` | `test_no_consumer_facing_text_claims_a_recommendation` |
 | Don't imply the referral is free to the lawyer | Disclosure states attorneys pay a flat fee | `compliance.disclosure()` | same |
 | Don't imply we analyzed their legal problem | The score is an internal quality grade shown only to attorneys and staff; it never rejects a lead and is never shown to consumers. Routing uses the practice area the consumer chose plus objective facts (ZIP, license, capacity). | [`domain/scoring.py`](../services/lead-router/app/domain/scoring.py) docstring | n/a (by construction) |
@@ -90,6 +90,14 @@ to their state or local bar association's lawyer referral service (`LeadStatus.U
       Sell or Share" handling if applicable)
 - [ ] Replace the demo disclosure version `2026-10-01` with your reviewed version and keep
       old versions on file (leads store which version they agreed to)
+- [ ] Decide with counsel how the consumer disclosure describes selection (section 2,
+      "Neutral, disclosed selection"). A starting point to review, not approved wording:
+      "Attorneys are chosen only by your state, ZIP code and the type of matter you picked.
+      When more than one qualifies, attorneys who pay more per inquiry may be contacted
+      first." Some states are stricter: Michigan's
+      [RI-365](https://www.michbar.org/opinions/ethics/numbered_opinions/ri-365) (2013)
+      treated per-lead fees to a for-profit lead site as paying for a recommendation. Check
+      each state you launch in.
 
 ## 7. Changing the wording safely
 

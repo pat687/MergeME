@@ -177,7 +177,17 @@ def send_bid_link(
     attorney_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
 ) -> BidLinkOut:
     attorney = _get_or_404(db, Attorney, attorney_id)
-    link = links.bids_link(settings.public_base_url, settings.link_signing_secret, attorney.id)
+    if not attorney.active:
+        raise HTTPException(status.HTTP_409_CONFLICT, "this attorney is inactive")
+    # A new link turns off every earlier one, so a forwarded or leaked link can be cut off.
+    db.refresh(attorney, with_for_update=True)
+    attorney.bids_link_version += 1
+    link = links.bids_link(
+        settings.public_base_url,
+        settings.link_signing_secret,
+        attorney.id,
+        attorney.bids_link_version,
+    )
     outbox.enqueue(db, "email", emails.bids_email(settings, attorney, link))
     db.commit()
     return BidLinkOut(sent_to=attorney.email, link=link if settings.demo_mode else None)

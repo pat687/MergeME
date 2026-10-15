@@ -1,4 +1,9 @@
-"""Attorneys manage their own bids. The signed link in their bid email is the only credential."""
+"""Attorneys manage their own bids. The signed link in their bid email is the only credential.
+
+Only the newest link works (sending a new one turns off the old), and only while the
+attorney is active. Subscribers can see the page but not change it: their leads are
+included in a flat fee, so their practice areas are set with staff.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, get_settings
 from app.config import Settings
 from app.db import utcnow
-from app.domain.types import BillingPlan, DistributionModel
+from app.domain.types import BillingPlan
 from app.models import Attorney, Territory
 from app.schemas import BidsUpdate, BidsView
 from app.services import links, market
@@ -24,11 +29,16 @@ def _dollars(cents: int) -> str:
 
 
 def _attorney(db: Session, settings: Settings, attorney_id: int, token: str | None) -> Attorney:
-    # Same answer for "no such attorney" and "bad link" so links can't be probed.
-    if not links.verify_bids(settings.link_signing_secret, attorney_id, token or ""):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "bid page not found")
+    # One answer for "no such attorney", "inactive", "old link" and "bad link", so links
+    # can't be probed.
     attorney = db.get(Attorney, attorney_id)
-    if attorney is None:
+    if (
+        attorney is None
+        or not attorney.active
+        or not links.verify_bids(
+            settings.link_signing_secret, attorney.id, attorney.bids_link_version, token or ""
+        )
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "bid page not found")
     return attorney
 
@@ -41,14 +51,18 @@ def pricing_rule(settings: Settings, plan: str) -> str:
         if settings.auction_pricing == "second_price"
         else "you pay your own bid"
     )
-    rule = (
+    if plan == BillingPlan.SUBSCRIPTION:
+        return (
+            "Your leads are included in your subscription, so you don't bid. In auctioned "
+            "practice areas you're asked after attorneys who pay per lead. To change your "
+            "practice areas, contact us."
+        )
+    return (
         f"In auctioned practice areas the highest bidder is asked first; if you take the lead, "
         f"{auction}. In other areas your bid is your flat price per lead. You only pay for "
-        "leads you accept, and the price never depends on whether you're hired."
+        "leads you accept, and the price never depends on whether you're hired. Other "
+        "attorneys' bids are private: you see your place in line, not their amounts."
     )
-    if plan == BillingPlan.SUBSCRIPTION:
-        rule += " On your subscription, leads are included: your bids only set your place in line."
-    return rule
 
 
 def _view(db: Session, settings: Settings, attorney: Attorney) -> BidsView:
@@ -57,6 +71,7 @@ def _view(db: Session, settings: Settings, attorney: Attorney) -> BidsView:
         name=attorney.name,
         firm=attorney.firm,
         plan=attorney.plan,
+        can_edit=attorney.plan != BillingPlan.SUBSCRIPTION,
         pricing_rule=pricing_rule(settings, attorney.plan),
         increment_cents=settings.bid_increment_cents,
         max_bid_cents=settings.max_bid_cents,
@@ -82,7 +97,13 @@ def update_bids(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> BidsView:
-    _attorney(db, settings, attorney_id, x_attorney_token)
+    if _attorney(db, settings, attorney_id, x_attorney_token).plan == BillingPlan.SUBSCRIPTION:
+        # A bid costs a subscriber nothing, so letting them set one would let them buy
+        # first place for free.
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "your leads are included in your subscription; contact us to change your areas",
+        )
     # Fresh and locked, so a bid change and an admin edit at the same moment can't
     # silently overwrite each other.
     attorney = db.scalars(
@@ -106,13 +127,14 @@ def update_bids(
                 )
             bids.pop(area.value, None)
             continue
+        # The floor applies everywhere: in shared areas the bid is the price itself.
         floor = settings.floor_for(area)
-        if not 0 <= cents <= settings.max_bid_cents:
-            problems.append(
-                f"{name}: bids must be between $0 and {_dollars(settings.max_bid_cents)}"
-            )
-        elif settings.policy_for(area) == DistributionModel.PING_TREE and cents < floor:
+        if cents < floor:
             problems.append(f"{name}: the lowest bid accepted is {_dollars(floor)}")
+        elif cents > settings.max_bid_cents:
+            problems.append(
+                f"{name}: the highest bid accepted is {_dollars(settings.max_bid_cents)}"
+            )
         bids[area.value] = cents
     if not bids:
         problems.append("keep at least one practice area, or ask us to pause your account")

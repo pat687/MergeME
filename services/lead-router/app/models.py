@@ -52,6 +52,8 @@ class Attorney(Base):
     daily_cap: Mapped[int] = mapped_column(Integer, default=10)
     exo_username: Mapped[str | None] = mapped_column(String(100))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Bumped each time a bid link is sent; only the newest link works (services/links.py).
+    bids_link_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     territories: Mapped[list[Territory]] = relationship(back_populates="attorney")
@@ -150,6 +152,8 @@ class Offer(Base):
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)
     responded_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     decline_reason: Mapped[str | None] = mapped_column(String(200))
+    # How the price was set, in words, written when the offer is priced (market.price_note).
+    price_note: Mapped[str | None] = mapped_column(String(200))
 
     lead: Mapped[Lead] = relationship(back_populates="offers")
     attorney: Mapped[Attorney] = relationship()

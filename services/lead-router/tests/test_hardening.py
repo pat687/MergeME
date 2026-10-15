@@ -583,20 +583,29 @@ def test_shared_max_attorneys_must_be_at_least_one():
         Settings(_env_file=None, shared_max_attorneys=0)
 
 
-def test_older_databases_get_the_new_column_at_startup(tmp_path):
+def test_older_databases_get_the_new_columns_at_startup(tmp_path):
     from sqlalchemy import inspect, text
 
-    from app.db import Base, make_engine, upgrade_schema
+    from app.db import ADDED_COLUMNS, Base, make_engine, upgrade_schema
 
     engine = make_engine(f"sqlite:///{tmp_path / 'old.db'}")
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
+        for table, column, _type in ADDED_COLUMNS:  # as an old release made them
+            conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
         conn.execute(
-            text("ALTER TABLE leads DROP COLUMN max_attorneys")
-        )  # as an old release made it
+            text(
+                "INSERT INTO attorneys (name, firm, email, bar_states, service_zips, bids_cents,"
+                " plan, monthly_fee_cents, daily_cap, active, created_at) VALUES ('A', 'F',"
+                " 'a@example.com', '[]', '[]', '{}', 'pay_per_lead', 0, 1, 1, '2026-10-01')"
+            )
+        )
     upgrade_schema(engine)
     upgrade_schema(engine)  # and again: safe to repeat
-    assert "max_attorneys" in {c["name"] for c in inspect(engine).get_columns("leads")}
+    for table, column, _type in ADDED_COLUMNS:
+        assert column in {c["name"] for c in inspect(engine).get_columns(table)}
+    with engine.connect() as conn:  # an existing attorney's bid link starts at version 0
+        assert conn.execute(text("SELECT bids_link_version FROM attorneys")).scalar_one() == 0
 
 
 @pytest.mark.parametrize(

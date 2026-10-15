@@ -228,14 +228,23 @@
   }
 
   // The market panel loads when opened, and again on each refresh while it's open.
+  let lastMarket = "";
   async function loadMarket() {
-    if (!document.getElementById("market").open) return;
+    const panel = document.getElementById("market");
+    if (!panel.open) return;
     const areas = await admin("/market");
+    const json = JSON.stringify(areas);
+    // Like the lead detail: don't redraw unchanged rows or wipe text being selected.
+    const selection = window.getSelection();
+    const selecting = selection && !selection.isCollapsed && panel.contains(selection.anchorNode);
+    if (json === lastMarket || selecting) return;
+    lastMarket = json;
+    const bidder = (b) => `${b.name} ${b.plan === "subscription" ? "(subscriber)" : money(b.bid_cents)}`;
     fill(document.getElementById("market_rows"), areas.map((m) => h("tr", {},
       h("td", {}, m.label),
       h("td", {}, m.model === "ping_tree" ? "Auction" : "Set price"),
-      h("td", {}, m.model === "ping_tree" ? money(m.floor_cents) : "-"),
-      h("td", {}, m.bidders.length ? m.bidders.map((b) => `${b.name} ${money(b.bid_cents)}`).join(" · ") : "-"),
+      h("td", {}, money(m.floor_cents)),
+      h("td", {}, m.bidders.length ? m.bidders.map(bidder).join(" · ") : "-"),
       h("td", {}, m.sold_last_30_days),
       h("td", {}, m.average_price_cents ? money(m.average_price_cents) : "-"))));
   }

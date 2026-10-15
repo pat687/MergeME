@@ -12,7 +12,15 @@ import unicodedata
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from app.domain.types import (
     BillingPlan,
@@ -460,13 +468,16 @@ class BidRow(BaseModel):
     label: str
     my_bid_cents: int | None = Field(description="Empty = not taking leads in this area")
     auctioned: bool = Field(description="True where leads are sold by auction (ping tree)")
-    floor_cents: int = Field(description="Lowest bid the auction accepts (0 if not auctioned)")
+    floor_cents: int = Field(description="Lowest bid accepted in this practice area")
+    below_floor: bool = Field(description="Your bid is below the lowest accepted: no leads")
     competing_bidders: int = Field(
-        description="Other active attorneys who could get the same leads"
+        description="Other active attorneys paying per lead who could get the same leads"
     )
     rank: int | None = Field(description="1 = first in line in the auction")
-    tied: bool
-    to_be_first_cents: int | None = Field(description="Bid that would put you first in line")
+    to_be_first_cents: int | None = Field(
+        description="A bid that would put you first in line, rounded up to a whole $10 "
+        "so other attorneys' bids stay private. Empty when you're already first."
+    )
     sold_last_30_days: int
     average_price_cents: int | None
     exclusive_territory: bool = Field(description="You rent an exclusive ZIP in this area")
@@ -477,6 +488,7 @@ class BidsView(BaseModel):
     name: str
     firm: str
     plan: BillingPlan
+    can_edit: bool = Field(description="False on a subscription: areas are set with staff")
     pricing_rule: str
     increment_cents: int
     max_bid_cents: int
@@ -488,7 +500,7 @@ class BidsUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    bids_cents: dict[PracticeArea, int | None] = Field(min_length=1)
+    bids_cents: dict[PracticeArea, StrictInt | None] = Field(min_length=1)
 
 
 class BidLinkOut(BaseModel):
@@ -500,6 +512,7 @@ class MarketBidder(BaseModel):
     attorney_id: int
     name: str
     bid_cents: int
+    plan: BillingPlan
 
 
 class MarketArea(BaseModel):

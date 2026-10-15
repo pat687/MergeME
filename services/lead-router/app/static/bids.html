@@ -30,28 +30,37 @@
 
   const toDollars = (cents) => (cents === null || cents === undefined ? "" : (cents / 100).toFixed(2));
 
-  function place(a) {
+  function place(a, d) {
     if (a.my_bid_cents === null) return "Not bidding";
+    if (!d.can_edit) return a.auctioned ? "After attorneys who pay per lead" : "Included in your plan";
+    if (a.below_floor) return a.auctioned ? "Not in line: below the lowest bid" : "No leads: below the lowest bid";
     if (!a.auctioned) return "Set price";
-    return `#${a.rank} of ${a.competing_bidders + 1}${a.tied ? " (tied)" : ""}`;
+    return `#${a.rank} of ${a.competing_bidders + 1}`;
+  }
+
+  function toBeFirst(a) {
+    if (!a.auctioned) return "-";
+    if (a.rank === 1) return "You're first";
+    return a.to_be_first_cents === null ? "-" : money(a.to_be_first_cents);
   }
 
   function render(d, message) {
     const rows = d.areas.map((a) => {
       const input = h("input", {
         type: "number", min: "0", step: "0.01", inputmode: "decimal",
-        id: `bid_${a.practice_area}`, "data-area": a.practice_area,
+        id: `bid_${a.practice_area}`, "data-area": a.practice_area, "data-label": a.label,
         "data-before": toDollars(a.my_bid_cents), value: toDollars(a.my_bid_cents),
-        placeholder: "none", "aria-describedby": "bids_help",
+        placeholder: "none", "aria-describedby": "bids_help message",
+        readonly: d.can_edit ? null : "",
       });
       return h("tr", {},
         h("th", { scope: "row" },
           h("label", { for: `bid_${a.practice_area}` }, a.label),
           a.exclusive_territory ? h("div", { class: "small muted" }, "Your exclusive territory") : null),
         h("td", {}, h("span", { class: "bid" }, "$", input)),
-        h("td", {}, place(a)),
-        h("td", {}, a.auctioned ? money(a.to_be_first_cents) : "-"),
-        h("td", {}, a.auctioned ? money(a.floor_cents) : "-"),
+        h("td", {}, place(a, d)),
+        h("td", {}, d.can_edit ? toBeFirst(a) : "-"),
+        h("td", {}, d.can_edit ? money(a.floor_cents) : "-"),
         h("td", {}, a.sold_last_30_days
           ? `${a.sold_last_30_days} sold, average ${money(a.average_price_cents)}` : "-"));
     });
@@ -66,21 +75,32 @@
             h("th", {}, "Practice area"), h("th", {}, "Your bid"), h("th", {}, "Your place"),
             h("th", {}, "Bid to be first"), h("th", {}, "Lowest bid"), h("th", {}, "Last 30 days"))),
           h("tbody", {}, rows))),
-        h("div", { class: "actions" }, h("button", { type: "submit", id: "save" }, "Save bids"))),
-      h("p", { class: "small muted" },
-        "Leave a bid empty to stop receiving leads in that area. Changes apply to the next lead."));
+        d.can_edit ? h("div", { class: "actions" }, h("button", { type: "submit", id: "save" }, "Save bids")) : null),
+      h("p", { class: "small muted" }, d.can_edit
+        ? "Leave a bid empty to stop receiving leads in that area. Changes apply to the next lead. " +
+          "\"Bid to be first\" is rounded up to a whole $10, so other attorneys' bids stay private."
+        : "Contact us to add or remove a practice area."));
   }
 
-  function showError(text) {
+  function showError(text, fields = []) {
     const box = document.getElementById("message");
     box.className = "error";
     box.setAttribute("role", "alert");
     box.textContent = text;
+    for (const input of fields) input.setAttribute("aria-invalid", "true");
+    if (fields.length) fields[0].focus();
+  }
+
+  // The server names each problem "<Practice area>: ...", so mark those fields.
+  function fieldsNamedIn(text) {
+    const named = text.split("; ").map((part) => part.split(":")[0]);
+    return [...view.querySelectorAll("input[data-area]")].filter((i) => named.includes(i.dataset.label));
   }
 
   async function save(event) {
     event.preventDefault();
     if (saving) return;
+    for (const input of view.querySelectorAll("input[aria-invalid]")) input.removeAttribute("aria-invalid");
     // Send only what changed, so an untouched area can never trip a rule.
     const bids = {};
     for (const input of view.querySelectorAll("input[data-area]")) {
@@ -89,21 +109,23 @@
       if (raw === "") { bids[input.dataset.area] = null; continue; }
       const dollars = Number(raw);
       if (!Number.isFinite(dollars) || dollars < 0) {
-        input.focus();
-        return showError("Enter each bid as a dollar amount, like 85 or 85.50.");
+        return showError("Enter each bid as a dollar amount, like 85 or 85.50.", [input]);
       }
       bids[input.dataset.area] = Math.round(dollars * 100);
     }
     if (!Object.keys(bids).length) return showError("Nothing changed yet.");
+    // aria-disabled, not disabled: disabling the focused button would drop keyboard focus.
     saving = true;
-    document.getElementById("save").disabled = true;
+    const button = document.getElementById("save");
+    button.setAttribute("aria-disabled", "true");
     try {
       const d = await api(`/api/v1/bids/${attorneyId}`, { method: "PUT", headers, body: { bids_cents: bids } });
       render(d, { text: "Saved. Your new bids apply to the next lead." });
       status.textContent = "Bids saved.";
+      document.getElementById("save").focus();  // the page was redrawn; keep the reader's place
     } catch (err) {
-      showError(err.message);
-      document.getElementById("save").disabled = false;
+      button.removeAttribute("aria-disabled");
+      showError(err.message, fieldsNamedIn(err.message));
     } finally {
       saving = false;
     }

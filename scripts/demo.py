@@ -143,6 +143,8 @@ def main() -> None:
          "line, never more than their own bid. If someone passes, the next bidder is asked.")
     for o in j["offers"]:
         print(f"  round {o['round']}: {names[o['attorney_id']]:<13} ${o['price_cents'] / 100:>6.2f}  {o['status']}")
+    check([o["price_cents"] for o in sorted(j["offers"], key=lambda o: o["round"])] == [8100, 7100, 5000],
+          "bids of $95, $80 and $70 are priced $81, $71 and $50")
     print("  Avery passes...")
     respond(offer_by(j, "Avery Stone", names), "decline")
     j = lead(jamie["lead_id"])
@@ -172,11 +174,14 @@ def main() -> None:
          "Attorneys pay per lead or a flat monthly fee. Never a share of what they earn.")
     period = date.today().strftime("%Y-%m")
     call("POST", f"/api/v1/admin/billing/run?period={period}", admin=True)
+    totals = {}
     for attorney_id, name in names.items():
         st = call("GET", f"/api/v1/admin/attorneys/{attorney_id}/statement?period={period}", admin=True)[1]
+        totals[name] = st["total_cents"]
         if st["total_cents"] or st["entries"]:
             kinds = ", ".join(sorted({e["kind"] for e in st["entries"]}))
             print(f"  {name:<13} ${st['total_cents'] / 100:>9.2f}   ({kinds})")
+    check(totals.get("Jordan Reyes") == 7100, "Jordan is billed the $71 market price, not the $80 bid")
 
     step(7, "The dashboard numbers", "The same numbers appear at /admin.")
     s = call("GET", "/api/v1/admin/stats", admin=True)[1]

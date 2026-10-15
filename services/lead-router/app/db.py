@@ -54,8 +54,12 @@ def make_session_factory(engine: Engine) -> sessionmaker:
 
 # Columns added after the first release. create_all() makes new tables but never changes
 # existing ones, so a database from an earlier version gets these added at startup.
-# Each must be nullable, so existing rows stay valid.
-ADDED_COLUMNS = [("leads", "max_attorneys", "INTEGER")]
+# Each must be nullable or have a default, so existing rows stay valid.
+ADDED_COLUMNS = [
+    ("leads", "max_attorneys", "INTEGER"),
+    ("attorneys", "bids_link_version", "INTEGER NOT NULL DEFAULT 0"),
+    ("offers", "price_note", "VARCHAR(200)"),
+]
 
 
 def upgrade_schema(engine: Engine) -> None:

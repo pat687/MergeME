@@ -50,6 +50,17 @@ class DistributionModel(StrEnum):
     PING_TREE = "ping_tree"  # highest bidder asked first, then the next, and so on
 
 
+class PriceBasis(StrEnum):
+    """How an offer's price was set. Saved with the offer, so the explanation an attorney
+    reads never changes afterwards, even if the pricing settings do."""
+
+    TERRITORY = "territory"  # covered by the monthly rent for an exclusive territory
+    SUBSCRIPTION = "subscription"  # covered by a monthly plan
+    SET_PRICE = "set_price"  # the attorney's own flat price for this practice area
+    SECOND_PRICE = "second_price"  # auction: one step above the next bid, never above own
+    FIRST_PRICE = "first_price"  # auction: the attorney's own bid
+
+
 class BillingPlan(StrEnum):
     PAY_PER_LEAD = "pay_per_lead"
     SUBSCRIPTION = "subscription"

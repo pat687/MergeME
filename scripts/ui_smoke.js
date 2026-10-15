@@ -231,31 +231,71 @@ async function newFamilyLead() {
     JSON.stringify({ placeBefore, placeAfter }));
 
   // Bid page: an attorney sees where they rank, gets a clear reason when a bid is too
-  // low, and moves to first place by raising it.
+  // low, and moves to first place by raising it. Keyboard focus survives both saves.
   const sam = (await adminGet("/api/v1/admin/attorneys")).find((a) => a.name === "Sam Okafor");
   const bidLink = (await (await fetch(`${BASE}/api/v1/admin/attorneys/${sam.id}/bid-link`,
     { method: "POST", headers: { "X-Admin-Key": KEY } })).json()).link;
   page = await open({ viewport: { width: 390, height: 900 } });
   await page.goto(bidLink);
   await page.waitForSelector("#bid_personal_injury");
-  const piPlace = () => page.$eval("#bid_personal_injury", (el) => el.closest("tr").cells[2].textContent);
-  const rankBefore = await piPlace();
+  const piCell = (n) => page.$eval("#bid_personal_injury", (el, i) => el.closest("tr").cells[i].textContent, n);
+  const rankBefore = await piCell(2);
+  const firstBefore = await piCell(3);  // Avery bid $95: shown rounded up to $100, never exact
   await page.fill("#bid_personal_injury", "10");
-  await page.click("#save");
+  await page.focus("#save");
+  await page.keyboard.press("Enter");
   await page.waitForSelector("#message.error");
   const tooLow = await page.textContent("#message");
+  const refusedFocus = await page.evaluate(() =>
+    [document.activeElement.id, document.activeElement.getAttribute("aria-invalid")].join(" "));
   await page.fill("#bid_personal_injury", "99");
-  await page.click("#save");
+  await page.focus("#save");
+  await page.keyboard.press("Enter");
   await page.waitForSelector("text=Saved.");
-  const rankAfter = await piPlace();
+  const savedFocus = await page.evaluate(() => document.activeElement.id);
+  const rankAfter = await piCell(2);
+  const firstAfter = await piCell(3);
   const bidOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   check("attorney bid page explains the floor and a higher bid moves them to first",
     /lowest bid accepted/.test(tooLow) && !rankBefore.startsWith("#1 ") && rankAfter.startsWith("#1 ")
-      && bidOverflow <= 0, JSON.stringify({ tooLow, rankBefore, rankAfter, bidOverflow }));
-  await fetch(`${BASE}/api/v1/bids/${sam.id}`, {  // put Sam's bid back for anyone reusing the stack
+      && firstBefore === "$100.00" && firstAfter === "You're first" && bidOverflow <= 0,
+    JSON.stringify({ tooLow, rankBefore, rankAfter, firstBefore, firstAfter, bidOverflow }));
+  check("bid page keeps keyboard focus: on the refused field, then on Save",
+    refusedFocus === "bid_personal_injury true" && savedFocus === "save",
+    JSON.stringify({ refusedFocus, savedFocus }));
+
+  // Subscribers' leads are included in their fee, so a bid would cost them nothing: their
+  // page shows the market but can't be changed.
+  const morgan = (await adminGet("/api/v1/admin/attorneys")).find((a) => a.name === "Morgan Lee");
+  const morganLink = (await (await fetch(`${BASE}/api/v1/admin/attorneys/${morgan.id}/bid-link`,
+    { method: "POST", headers: { "X-Admin-Key": KEY } })).json()).link;
+  page = await open({ viewport: { width: 390, height: 900 } });
+  await page.goto(morganLink);
+  await page.waitForSelector("#bid_family_law");
+  const readOnly = await page.$eval("#bid_family_law", (el) => el.readOnly);
+  check("a subscriber's bid page is read-only", readOnly && (await page.$("#save")) === null,
+    JSON.stringify({ readOnly }));
+
+  // Dashboard market panel: a refresh with new data doesn't wipe text being selected.
+  page = await open({ viewport: { width: 1280, height: 900 } });
+  await page.goto(`${BASE}/admin`);
+  await page.fill("#key", KEY);
+  await page.click("#login_form button");
+  await page.click("#market summary");
+  await page.waitForSelector("#market_rows tr");
+  const selectBidders = () => page.evaluate(() => {
+    getSelection().selectAllChildren(document.querySelector("#market_rows tr td:nth-child(4)"));
+    return getSelection().toString();
+  });
+  const selectedBefore = await selectBidders();
+  await fetch(`${BASE}/api/v1/bids/${sam.id}`, {  // put Sam's bid back; the market data changes
     method: "PUT", headers: { "Content-Type": "application/json", "X-Attorney-Token": tokenOf(bidLink) },
     body: JSON.stringify({ bids_cents: { personal_injury: 7000 } }),
   });
+  await page.waitForTimeout(6000);
+  const selectedAfter = await page.evaluate(() => getSelection().toString());
+  check("market panel refresh keeps text the operator is selecting",
+    selectedBefore.length > 0 && selectedAfter === selectedBefore, JSON.stringify({ selectedBefore, selectedAfter }));
 
   check("no JavaScript errors on any page", pageErrors.length === 0, pageErrors.join(" | "));
   await browser.close();

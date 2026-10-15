@@ -160,11 +160,13 @@ def test_accept_racing_the_expiry_worker_stays_consistent(pg):
 def test_router_and_worker_can_upgrade_the_schema_at_the_same_time(pg):
     from sqlalchemy import inspect, text
 
-    from app.db import upgrade_schema
+    from app.db import ADDED_COLUMNS, upgrade_schema
 
     engine = make_engine(PG_URL)
     with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE leads DROP COLUMN max_attorneys"))  # an older database
+        for table, column, _type in ADDED_COLUMNS:  # an older database
+            conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
     all_at_once(4, lambda _i: upgrade_schema(make_engine(PG_URL)))  # raises if any collide
-    assert "max_attorneys" in {c["name"] for c in inspect(engine).get_columns("leads")}
+    for table, column, _type in ADDED_COLUMNS:
+        assert column in {c["name"] for c in inspect(engine).get_columns(table)}
     engine.dispose()

@@ -234,11 +234,25 @@ sequenceDiagram
 **The market sets the price.** With `ROUTER_AUCTION_PRICING=second_price` (the default)
 each attorney's price is one increment (`ROUTER_BID_INCREMENT_CENTS`, $1) above the next bid
 in line, or the floor if nobody is behind them, and never more than their own bid
-(`distribution.market_price`). This is the second-price rule ad auctions use: bidding what a
-lead is truly worth is always safe, so attorneys stop gaming their bids and the price
-settles where real demand is. Prices are fixed on each offer when the line-up is made.
-Attorneys change their own bids on a signed bid page (`/bids/{id}`, `app/api/bids.py`);
-`app/services/market.py` computes their rank, the bid to be first and recent sale prices.
+(`distribution.market_price`). This is the second-price rule ad auctions use: an attorney
+never pays more than their own bid, and usually less, so bidding what a lead is worth to
+them is safe. Prices, and the one-line note explaining them (`offers.price_note`), are fixed
+on each offer when the line-up is made, so a later settings change can't rewrite an old
+offer's explanation.
+
+Rules that keep the auction honest:
+
+* **A floor in every practice area.** `ROUTER_FLOOR_PRICE_CENTS` is the lowest bid accepted
+  everywhere, including set-price (shared) areas where the bid *is* the price, and it is
+  what the last bidder in line pays. Startup fails if any area would have a $0 floor.
+* **Subscribers don't bid.** Their leads are included in a flat monthly fee, so a bid would
+  cost them nothing. In auctions they're asked after every paying bidder and their bids
+  never set anyone's price; the bid page is read-only for them.
+* **Rival bids stay private.** The bid page (`/bids/{id}`, `app/api/bids.py`) shows an
+  attorney's place in line and a bid that would put them first, rounded up to a whole $10
+  (`market.bid_board`), never another attorney's exact bid. That limits, but can't fully
+  remove, a rival's ability to bid just under the leader to raise the leader's price; the
+  leader still never pays more than their own bid.
 
 Every bidder above the floor joins the line, but no more attorneys are *asked*
 (`activated_at` set) than the person agreed to. That number is stored on the lead with
@@ -324,6 +338,7 @@ for building eXo with the add-on and the version-matching caveat.
 | Admin API | `X-Admin-Key` header, compared in constant time (`hmac.compare_digest`) |
 | Attorney actions | HMAC-SHA256 signed links; nothing stored; invalid or non-ASCII token → 404, the same as a missing offer |
 | Token in logs | The token sits after `#` in the link (never sent to the server); the page sends it in an `X-Offer-Token` header, which isn't logged |
+| Bid links | One signed link per attorney (`bids:{id}:{version}`, sent in an `X-Attorney-Token` header). Sending a new link bumps `attorneys.bids_link_version`, which turns off every earlier link; links also stop working when the attorney is deactivated. Bid links are only in the bid-link email, never in offer emails, which tend to be forwarded |
 | Consumer PII | Name, phone and email withheld until accepted; the description is redacted (names, phones, emails, street addresses) in previews and offer emails |
 | XSS | Pages build DOM with `textContent` only; no `innerHTML` with user data |
 | Bots and abuse | Honeypot field, link-spam and disposable-domain checks, names limited to letters with no domain-like periods, receipts that contain no submitted text, per-IP intake rate limit |

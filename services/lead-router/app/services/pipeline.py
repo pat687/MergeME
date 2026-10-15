@@ -27,7 +27,7 @@ from app.domain.matching import Candidate
 from app.domain.types import DistributionModel, LeadStatus, OfferStatus
 from app.models import Attorney, Lead, Offer, Territory
 from app.schemas import IntakeRequest
-from app.services import audit, emails, exo_sync, offers, outbox
+from app.services import audit, emails, exo_sync, market, offers, outbox
 
 
 @dataclass(frozen=True)
@@ -223,6 +223,7 @@ def _create_offers(
             round=spec.round,
             status=spec.status,
             price_cents=spec.price_cents,
+            price_note=market.price_note(spec.basis, settings.bid_increment_cents),
             created_at=now,
         )
         if spec.status == OfferStatus.PENDING:

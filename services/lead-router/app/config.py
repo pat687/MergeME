@@ -10,8 +10,10 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.domain.types import PracticeArea
 
 DEV_ADMIN_KEY = "dev-admin-key-change-me"
 DEV_SIGNING_SECRET = "dev-signing-secret-change-me"
@@ -59,7 +61,9 @@ class Settings(BaseSettings):
     shared_max_attorneys: int = Field(default=3, ge=1)
     shared_offer_ttl_seconds: int = 15 * 60
     ping_offer_ttl_seconds: int = 90
-    # Lowest bid (in cents) the auction will accept per practice area.
+    # Lowest price per lead (in cents) in each practice area: the lowest bid the auction
+    # accepts, the lowest set price in shared areas, and what the last bidder in an
+    # auction line pays. "*" covers the areas not listed. Every area needs one above $0.
     floor_price_cents: dict[str, int] = Field(
         default_factory=lambda: {
             "personal_injury": 5000,
@@ -101,6 +105,19 @@ class Settings(BaseSettings):
     # --- Public wording -------------------------------------------------------
     platform_name: str = "Barrgo Legal Connect"
     disclosure_version: str = "2026-10-01"
+
+    @model_validator(mode="after")
+    def _every_area_has_a_floor(self) -> Settings:
+        # A missing or $0 floor would quietly give leads away: the last bidder in an
+        # auction pays the floor. Fail at startup instead.
+        free = [area.value for area in PracticeArea if self.floor_for(area) < 1]
+        if free:
+            raise ValueError(
+                "ROUTER_FLOOR_PRICE_CENTS needs a price above 0 for every practice area "
+                f'(missing or 0: {", ".join(free)}). Add a "*" entry to cover the rest, '
+                'for example {"personal_injury": 5000, "*": 1500}.'
+            )
+        return self
 
     def policy_for(self, practice_area: str) -> str:
         return self.distribution_policy.get(
