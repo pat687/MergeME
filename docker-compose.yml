@@ -37,6 +37,25 @@ x-router-env: &router-env
   ROUTER_EXO_LEADCAPTURE_TOKEN: ${ROUTER_EXO_LEADCAPTURE_TOKEN:-}
   ROUTER_EXO_USERNAME: ${ROUTER_EXO_USERNAME:-}
   ROUTER_EXO_PASSWORD: ${ROUTER_EXO_PASSWORD:-}
+  # Every other setting in app/config.py. Empty means "use the default" (see .env.example).
+  ROUTER_DISTRIBUTION_POLICY: ${ROUTER_DISTRIBUTION_POLICY:-}
+  ROUTER_FLOOR_PRICE_CENTS: ${ROUTER_FLOOR_PRICE_CENTS:-}
+  ROUTER_SHARED_MAX_ATTORNEYS: ${ROUTER_SHARED_MAX_ATTORNEYS:-}
+  ROUTER_DUPLICATE_WINDOW_DAYS: ${ROUTER_DUPLICATE_WINDOW_DAYS:-}
+  ROUTER_BUSINESS_TIMEZONE: ${ROUTER_BUSINESS_TIMEZONE:-}
+  ROUTER_INTAKE_RATE_LIMIT_PER_MINUTE: ${ROUTER_INTAKE_RATE_LIMIT_PER_MINUTE:-}
+  ROUTER_OUTBOX_MAX_ATTEMPTS: ${ROUTER_OUTBOX_MAX_ATTEMPTS:-}
+  ROUTER_OUTBOX_TIME_BUDGET_SECONDS: ${ROUTER_OUTBOX_TIME_BUDGET_SECONDS:-}
+  ROUTER_WORKER_INTERVAL_SECONDS: ${ROUTER_WORKER_INTERVAL_SECONDS:-}
+  ROUTER_SMTP_FROM: ${ROUTER_SMTP_FROM:-}
+  ROUTER_SMTP_USERNAME: ${ROUTER_SMTP_USERNAME:-}
+  ROUTER_SMTP_PASSWORD: ${ROUTER_SMTP_PASSWORD:-}
+  ROUTER_SMTP_STARTTLS: ${ROUTER_SMTP_STARTTLS:-}
+  ROUTER_PLATFORM_NAME: ${ROUTER_PLATFORM_NAME:-}
+  ROUTER_DISCLOSURE_VERSION: ${ROUTER_DISCLOSURE_VERSION:-}
+  # Only these addresses may set X-Forwarded-For (it becomes the consent IP on file).
+  # Nothing sits in front of the router by default, so trust no one but localhost.
+  FORWARDED_ALLOW_IPS: ${ROUTER_TRUSTED_PROXY_IPS:-127.0.0.1}
 
 services:
   # ---------------------------------------------------------------------------
@@ -118,7 +137,7 @@ services:
     image: ${EXO_IMAGE:-exoplatform/exo-community:7.2.0}
     environment:
       EXO_PROXY_VHOST: ${EXO_PROXY_VHOST:-exoapp.local}
-      EXO_PROXY_PORT: 80
+      EXO_PROXY_PORT: ${EXO_HTTP_PORT:-80}
       EXO_PROXY_SSL: "false"
       EXO_DB_TYPE: mysql
       EXO_DB_HOST: exo-db
@@ -131,7 +150,7 @@ services:
       EXO_MAIL_SMTP_PORT: 1025
       EXO_MAIL_FROM: workspace@barrgo.local
       JAVA_OPTS: >-
-        -Donlyoffice.documentserver.host=${EXO_PROXY_VHOST:-exoapp.local}
+        -Donlyoffice.documentserver.host=${EXO_PUBLIC_HOST:-exoapp.local}
         -Donlyoffice.documentserver.schema=http
         -Donlyoffice.documentserver.allowedhosts=localhost,${EXO_PROXY_VHOST:-exoapp.local}
         -Donlyoffice.documentserver.accessOnly=false

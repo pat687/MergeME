@@ -23,19 +23,22 @@ add-on has no release that targets eXo **7.2**:
 
 | lead-capture ref | Built against (from its `pom.xml`) | Use with |
 |---|---|---|
-| `1.0.0-M42` | Meeds tasks `7.0.0-exo-RC03` | eXo 7.0.x |
-| `1.0.0-M43` | Meeds tasks `7.3.0-M09` | eXo 7.3 milestones |
-| `develop` | `7.3.x-SNAPSHOT` | eXo 7.3 development builds |
+| `1.0.0-M42` (the `make exo-addon` default) | Meeds tasks `7.0.0-exo-RC03` | `exoplatform/exo-community:7.0.0` (the default base) |
+| `1.0.0-M43` | Meeds tasks `7.3.0-M09` | eXo 7.3 milestones (no `7.3.x` release image yet) |
+| `master` (the repo's default branch) | `7.3.x-SNAPSHOT` | eXo 7.3 development builds |
 
-Pick the pair that matches. For example, run the whole stack on 7.0 with the M42 add-on:
+The defaults build a matching pair. Because they're eXo **7.0**, using the add-on means
+running the workspace on 7.0 rather than the 7.2.0 the stack uses without it:
 
 ```bash
-make exo-addon EXO_BASE_IMAGE=exoplatform/exo-community:7.0 LEADCAPTURE_REF=1.0.0-M42
+make exo-addon                       # = EXO_BASE_IMAGE=exoplatform/exo-community:7.0.0 LEADCAPTURE_REF=1.0.0-M42
 # then in .env:
 EXO_IMAGE=barrgo/exo-leadcapture:local
 ```
 
-Check that the base image tag exists on Docker Hub (`exoplatform/exo-community`) before building.
+Other pairs: `make exo-addon EXO_BASE_IMAGE=... LEADCAPTURE_REF=...`. The image tags
+that exist are listed on Docker Hub under `exoplatform/exo-community` (as of October 2026:
+7.0.0–7.0.3, 7.1.0–7.1.3, 7.2.0–7.2.2).
 
 > **Verification status:** the Dockerfile follows the add-on's own packaging (a zip with
 > `webapps/*.war` and `lib/*.jar`), but it was not built end to end while this repo was

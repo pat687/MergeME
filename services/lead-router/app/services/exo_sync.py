@@ -65,7 +65,11 @@ class ExoLeadCaptureClient:
             auth = httpx.BasicAuth(settings.exo_username, settings.exo_password or "")
         self.token = settings.exo_leadcapture_token or ""
         self.http = httpx.Client(
-            base_url=settings.exo_base_url, auth=auth, timeout=15, transport=transport
+            base_url=settings.exo_base_url,
+            auth=auth,
+            # Short timeouts: a hung eXo should cost the worker seconds, not minutes.
+            timeout=httpx.Timeout(10.0, connect=5.0),
+            transport=transport,
         )
 
     def create_lead(self, payload: dict[str, Any]) -> None:

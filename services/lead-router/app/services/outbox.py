@@ -10,6 +10,7 @@ both problems. This is the "transactional outbox" pattern.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
@@ -41,9 +42,16 @@ def deliver_due(
     now: datetime,
     max_attempts: int,
     batch_size: int = 50,
+    time_budget_seconds: float | None = None,
 ) -> int:
-    """Send everything that's due. Returns how many messages were delivered."""
+    """Send what's due. Returns how many messages were delivered.
+
+    With a time budget, stop starting new sends once it's used up; the rest wait
+    for the next cycle. That keeps a slow mail or eXo server from holding up the
+    worker's other job, timing out offers.
+    """
     delivered = 0
+    deadline = None if time_budget_seconds is None else time.monotonic() + time_budget_seconds
     with session_factory() as db:
         due = db.scalars(
             select(OutboxMessage)
@@ -59,6 +67,8 @@ def deliver_due(
         ).all()
 
         for msg in due:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             try:
                 handler = handlers.get(msg.kind)
                 if handler is None:

@@ -13,7 +13,7 @@
     <h1>Lead offer</h1>
     <span class="tag">For participating attorneys</span>
   </header>
-  <div id="view" class="card"><p class="muted">Loading...</p></div>
+  <div id="view" class="card" aria-live="polite"><p class="muted">Loading...</p></div>
   <p class="small muted">You decide whether to take on any matter. Contact details are shared only after you accept.</p>
 </main>
 
@@ -21,34 +21,75 @@
   import { api, fill, h, label, money, phone, pill, when } from "/static/common.js";
 
   const offerId = location.pathname.split("/").pop();
-  const token = new URLSearchParams(location.search).get("t") || "";
-  const view = document.getElementById("view");
-  let timer;
+  // The token lives after '#', which browsers never send to the server (so it can't
+  // end up in access logs). Older links used '?t='; move those into the fragment.
+  const params = new URLSearchParams(location.hash.slice(1) || location.search);
+  const token = params.get("t") || "";
+  if (location.search) history.replaceState(null, "", `${location.pathname}#t=${token}`);
 
-  function countdown(iso) {
-    const span = h("span", { class: "mono" });
-    const tick = () => {
-      const secs = Math.max(0, Math.round((new Date(iso) - Date.now()) / 1000));
-      span.textContent = `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, "0")}s`;
-      if (secs === 0) { clearInterval(timer); load(); }
-    };
+  const view = document.getElementById("view");
+  const getOffer = () => api(`/api/v1/offers/${offerId}`, { headers: { "X-Offer-Token": token } });
+  let timer = null;
+  let busy = false;
+
+  function stopTimer() {
     clearInterval(timer);
-    tick();
+    timer = null;
+  }
+
+  // Count down from the server's own figure, not the browser clock (which may be off).
+  // At zero, ask the server once, after a short pause; never in a tight loop.
+  function countdown(secondsLeft) {
+    const span = h("span", { class: "mono" });
+    const deadline = Date.now() + secondsLeft * 1000;
+    const tick = () => {
+      const secs = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      span.textContent = `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, "0")}s`;
+      if (secs === 0) {
+        stopTimer();
+        setTimeout(load, 1500);
+      }
+    };
+    stopTimer();
     timer = setInterval(tick, 1000);
+    tick();
     return span;
   }
 
-  async function act(action) {
-    const reason = action === "decline" ? prompt("Optional: why are you passing? (e.g. conflict, too busy)") : null;
+  async function act(action, reason = null) {
+    if (busy) return;
+    busy = true;
+    view.querySelectorAll("button").forEach((b) => (b.disabled = true));
     try {
       render(await api(`/api/v1/offers/${offerId}/${action}`, { method: "POST", body: { token, reason } }));
     } catch (err) {
-      await load();
-      view.prepend(h("p", { class: "error", role: "alert" }, err.message));
+      const latest = await getOffer().catch(() => null);
+      if (latest) render(latest);
+      // A double click can make the second request lose to the first; that's not an error.
+      if (!(latest && latest.status === "accepted" && action === "accept")) {
+        view.prepend(h("p", { class: "error", role: "alert" }, err.message));
+      }
+    } finally {
+      busy = false;
     }
   }
 
+  // Passing can't be undone, so ask first. Cancel really cancels.
+  function confirmPass() {
+    if (view.querySelector("#pass_reason")) return;
+    const reason = h("input", { id: "pass_reason", maxlength: "200", placeholder: "e.g. conflict, too busy" });
+    const box = h("div", { class: "notice", role: "group", "aria-label": "Confirm pass" },
+      h("label", { for: "pass_reason" }, "Why are you passing? (optional)"),
+      reason,
+      h("div", { class: "actions" },
+        h("button", { class: "danger", onclick: () => act("decline", reason.value.trim() || null) }, "Yes, pass on this lead"),
+        h("button", { class: "secondary", onclick: () => box.remove() }, "Cancel")));
+    view.querySelector(".actions")?.after(box);
+    reason.focus();
+  }
+
   function render(o) {
+    if (o.status !== "pending") stopTimer();
     const facts = [
       ["Practice area", label(o.practice_area)],
       ["Location", `${o.zip_code}, ${o.state}`],
@@ -57,8 +98,8 @@
       ["How it's offered", label(o.model)],
     ];
     fill(view,
-      h("div", { class: "toolbar" }, pill(o.status), o.status === "pending" && o.expires_at
-        ? h("span", { class: "small muted" }, "Time left: ", countdown(o.expires_at)) : null),
+      h("div", { class: "toolbar" }, pill(o.status), o.status === "pending" && o.seconds_left !== null
+        ? h("span", { class: "small muted" }, "Time left: ", countdown(o.seconds_left)) : null),
       h("p", {}, o.notice),
       h("div", { class: "facts" }, facts.map(([k, v]) => h("div", { class: "fact" }, h("div", { class: "k" }, k), h("div", { class: "v" }, v)))),
       h("h3", {}, "What they told us"),
@@ -71,15 +112,16 @@
         h("p", {}, o.contact.description)) : null,
       o.status === "pending" ? h("div", { class: "actions" },
         h("button", { onclick: () => act("accept") }, "Accept lead"),
-        h("button", { class: "secondary", onclick: () => act("decline") }, "Pass")) : null,
+        h("button", { class: "secondary", onclick: confirmPass }, "Pass")) : null,
       o.expires_at ? h("p", { class: "small muted" }, `Offer deadline: ${when(o.expires_at)}`) : null,
     );
   }
 
   async function load() {
     try {
-      render(await api(`/api/v1/offers/${offerId}?t=${encodeURIComponent(token)}`));
+      render(await getOffer());
     } catch (err) {
+      stopTimer();
       fill(view, h("p", { class: "error" }, err.message));
     }
   }

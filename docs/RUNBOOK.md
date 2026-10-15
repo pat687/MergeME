@@ -44,6 +44,10 @@ How to run, check, back up and fix the stack. Commands are run from the repo roo
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `make up` says `run make init` | No `.env` | `make init` |
+| Port 8000 (or 8025, or 80) is already in use | Another program has it | Set `ROUTER_HTTP_PORT`, `MAILPIT_UI_PORT` or `EXO_HTTP_PORT` in `.env`. The links in emails follow `ROUTER_HTTP_PORT` automatically. For eXo on a port other than 80, also set `EXO_PUBLIC_HOST=exoapp.local:<port>`. |
+| Intake returns `429 Too Many Requests` | Per-IP rate limit (default 10 per minute) | Expected under abuse. For load tests, raise `ROUTER_INTAKE_RATE_LIMIT_PER_MINUTE` (or set it to 0). |
+| An attorney gets "you can't take this lead right now: daily lead cap reached" | They've accepted `daily_cap` leads since local midnight (`ROUTER_BUSINESS_TIMEZONE`) | Raise their cap with `PATCH /api/v1/admin/attorneys/{id}`, or wait until midnight |
+| An intake is rejected with "consent was given on an outdated form" | `ROUTER_DISCLOSURE_VERSION` changed while their page was open | Expected: they need to reload and agree to the current wording |
 | Image pull fails with `429 Too Many Requests` | Docker Hub anonymous rate limit | `docker login`, wait, or use a mirror (e.g. `mirror.gcr.io/library/postgres:16.15`, then `docker tag` it to the expected name) |
 | Leads stay `offered` past the deadline | Worker not running | `docker compose ps lead-worker`; `docker compose up -d lead-worker`. Opening the offer link also expires it lazily. |
 | Emails not arriving | SMTP unreachable | Dashboard shows pending/failed counts; `docker compose logs lead-worker`. Messages retry automatically. |
@@ -59,9 +63,13 @@ How to run, check, back up and fix the stack. Commands are run from the repo roo
 Router (leads, offers, ledger, audit):
 
 ```bash
-make backup
-gunzip -c backups/router-20261015-020000.sql.gz | docker compose exec -T router-db psql -U router router
+make backup        # prints "Backup FAILED" and exits non-zero if pg_dump didn't finish
+gunzip -c backups/router-20261015-020000.sql.gz \
+  | docker compose exec -T router-db psql -v ON_ERROR_STOP=1 -U router router
 ```
+
+The dump includes `DROP ... IF EXISTS` statements, so restoring replaces the current data,
+and `ON_ERROR_STOP=1` makes a bad dump fail loudly instead of half-restoring.
 
 eXo keeps data in three places: MySQL (`exo_db_data`), files (`exo_data`) and the search
 index (`exo_search_data`, which can be rebuilt). Back up the first two together while eXo is stopped:
@@ -89,5 +97,6 @@ docker compose start exo
 - [ ] Remove Mailpit and the Elasticsearch disk-watermark override
 - [ ] Nightly backups copied off the machine, plus a tested restore
 - [ ] Monitoring on `/readyz`, outbox failed count, disk space and container restarts
-- [ ] Rate limiting on `/api/v1/intake` at the proxy
+- [ ] A shared rate limit on `/api/v1/intake` at the proxy (the built-in one is per process)
+- [ ] If a proxy sits in front of the router, set `ROUTER_TRUSTED_PROXY_IPS` to its address
 - [ ] Legal sign-off: see [COMPLIANCE.md](COMPLIANCE.md#6-launch-checklist-business-and-legal)

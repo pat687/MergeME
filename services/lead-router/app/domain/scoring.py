@@ -5,9 +5,9 @@ and writes down why. The total decides the tier (A, B or C). Because each
 point has a written reason, anyone can ask "why is this lead a B?" and get a
 real answer instead of "the algorithm said so".
 
-The score is an internal quality signal for pricing and ordering. It is NOT a
-judgement about anyone's legal case, and it's never shown to the consumer as
-one (see docs/COMPLIANCE.md).
+The score is an internal quality signal shown to attorneys and staff (tier A/B/C
+on every offer). It is NOT a judgement about anyone's legal case, it never
+rejects a lead, and it's never shown to the consumer (see docs/COMPLIANCE.md).
 """
 
 from __future__ import annotations
@@ -126,6 +126,10 @@ def _flags(i: IntakeRequest, today: date) -> list[str]:
 
 def score(inquiry: IntakeRequest, today: date) -> Score:
     factors = [f for rule in RULES if (f := rule(inquiry, today)) is not None]
-    total = max(0, min(100, sum(f.points for f in factors)))
+    raw = sum(f.points for f in factors)
+    total = max(0, min(100, raw))
+    if total != raw:
+        # Keep the math visible: the breakdown always adds up to the total.
+        factors.append(Factor("limit", total - raw, "scores are kept between 0 and 100"))
     tier = "A" if total >= TIER_A else "B" if total >= TIER_B else "C"
     return Score(total=total, tier=tier, factors=factors, flags=_flags(inquiry, today))

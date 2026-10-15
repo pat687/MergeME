@@ -51,11 +51,20 @@ def _phone_problem(phone: str) -> str | None:
     return None
 
 
-def scrub(inquiry: IntakeRequest, *, is_duplicate: bool) -> ScrubResult:
+def scrub(
+    inquiry: IntakeRequest, *, is_duplicate: bool, consent_version: str | None = None
+) -> ScrubResult:
+    """`consent_version` is the disclosure version currently shown on the form.
+
+    The lead stores the server's consent wording, so the version the person agreed
+    to must be that same version; otherwise the consent record wouldn't match.
+    """
     reasons: list[str] = []
 
     if not inquiry.consent:
         reasons.append("no consent to be contacted")
+    elif consent_version is not None and inquiry.consent_version != consent_version:
+        reasons.append("consent was given on an outdated form; please reload and try again")
     if inquiry.website:
         reasons.append("spam: hidden honeypot field was filled in")
     domain = inquiry.email.rsplit("@", 1)[-1]

@@ -65,9 +65,12 @@ export async function api(path, { method = "GET", body, headers = {} } = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = Array.isArray(data.detail)
-      ? data.detail.map((d) => `${d.loc.slice(-1)[0]}: ${d.msg}`).join("; ")
+      ? data.detail.map((d) => `${d.loc.slice(-1)[0]}: ${d.msg.replace(/^Value error, /, "")}`).join("; ")
       : data.detail;
-    throw new Error(detail || `Request failed (${res.status})`);
+    const err = new Error(detail || `Request failed (${res.status})`);
+    err.status = res.status;
+    err.fields = Array.isArray(data.detail) ? data.detail : [];  // for per-field messages
+    throw err;
   }
   return data;
 }

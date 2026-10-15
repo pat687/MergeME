@@ -14,7 +14,8 @@ decisions worth highlighting, and answers to the questions you're most likely to
 > ping-tree auction. It's built to follow attorney-advertising rules: it can only charge flat
 > fees, so fee-splitting is impossible by construction. It's race-safe, every side effect
 > goes through a transactional outbox, every decision is explainable, and the whole thing
-> starts with one command and is covered by 61 automated tests and CI."
+> starts with one command and is covered by 104 automated tests, including real
+> concurrency tests on Postgres, plus CI."
 
 ## 2. The 5-minute live demo
 
@@ -26,7 +27,7 @@ decisions worth highlighting, and answers to the questions you're most likely to
 | 4 | Point at the score breakdown | "Every point has a reason. If ops asks why a lead was a B, we can show them." |
 | 5 | Point at the shared race (200 vs 409) | "Two attorneys clicked at once. A compare-and-set update guarantees exactly one wins." |
 | 6 | Open http://localhost:8000/admin and click a lead | "The decision trail: who was skipped and why, every offer, every timeout." |
-| 7 | Click **open as attorney** on an offer | "Attorneys get a signed link. They see a preview with no personal data until they accept." |
+| 7 | Click **open as attorney** on an offer | "Attorneys get a signed link. Until they accept, contact details are withheld and the description is redacted." |
 | 8 | Open http://localhost:8025 | "Every email went through the outbox. If SMTP were down, they'd retry with backoff." |
 | 9 | Open http://localhost:8000/docs | "The OpenAPI docs are generated from the same Pydantic models that validate input." |
 | 10 | (If time) `make up-full`, http://exoapp.local | "The SharePoint replacement: spaces, documents, wiki, in-browser Office editing." |
@@ -69,10 +70,13 @@ and an eXo outage can't stop leads from flowing. eXo still gets the data through
 lead-capture add-on's REST API.
 
 **What happens if two attorneys accept at the same millisecond?**
-Both requests try `SELECT ... FOR UPDATE` on the lead row, so one waits. The first runs the
-conditional update (1 row), marks the other offers lost, and commits. The second then sees
-its offer is `lost` and returns 409 "another attorney claimed this lead first". There's a
-test for it, and the demo shows it.
+Both requests try `SELECT ... FOR UPDATE` on the lead row, so one waits. The first locks the
+attorney row, re-checks their daily cap, runs the conditional update (1 row), marks the
+other offers lost, and commits. The second then sees its offer is `lost` and returns 409
+"another attorney claimed this lead first". Every write is a compare-and-set, so even
+without row locks (SQLite) a stale writer changes nothing. `test_concurrency_postgres.py`
+fires real threads through a barrier at Postgres to prove it, and I checked that each test
+fails when its fix is removed.
 
 **How do you prevent losing emails?**
 The outbox row is written in the same transaction as the change. If the transaction commits,
@@ -95,9 +99,12 @@ clamped to 0–100, and the breakdown is stored on the lead and shown in the das
 Scores never auto-reject a lead. Flags like "time-sensitive" are notes for the attorney.
 
 **What are the security considerations?**
-Admin key compared in constant time; HMAC-signed attorney links; no PII in offer
-previews or offer emails; XSS-safe DOM rendering; non-root containers; secrets generated
-per install and never committed; naive datetimes refused at the DB boundary.
+Admin key compared in constant time (as bytes, so odd input can't cause a 500);
+HMAC-signed attorney links with the token after `#` so it never reaches server logs;
+contact fields withheld and descriptions redacted before acceptance; forged
+`X-Forwarded-For` ignored, so the consent IP is trustworthy; per-IP rate limit on intake;
+XSS-safe DOM rendering; non-root containers; secrets generated per install and never
+committed; naive datetimes refused at the DB boundary.
 
 **What's the legal risk and how does the code address it?**
 The main risks are fee-splitting, implying a recommendation, and consent for calls. The
@@ -106,8 +113,9 @@ version, time, IP and user agent are stored on every lead. See `docs/COMPLIANCE.
 still have counsel review before launch, because state rules differ.
 
 **What would you do next?**
-Alembic migrations, rate limiting at the proxy, Prometheus metrics, an attorney self-service
-portal (bids, caps, pause), SSO between eXo and the dashboard, and a data-retention job.
+Alembic migrations, a shared rate limit at the proxy (today's is per process), Prometheus
+metrics, an attorney self-service portal (bids, caps, pause), SSO between eXo and the
+dashboard, expiring offer links, and a data-retention job.
 
 **What was the hardest bug?**
 On first boot, eXo's document service failed with bean-creation errors. The root cause was
@@ -115,6 +123,15 @@ that eXo gave up waiting for Elasticsearch after 20 seconds. Fix: a real Elastic
 health check, and `depends_on: condition: service_healthy`. After that, Elasticsearch went
 red because the disk was over its 90% watermark, so it refused to place shards. Documented
 in the runbook, with a local-only override.
+
+**How did you review your own work?**
+I ran an adversarial multi-agent review on my own pull request. Six reviewers each covered
+one area (concurrency, security, business rules, infrastructure, docs, frontend), and three
+skeptics tried to disprove every finding. 40 survived. Examples: an attorney could accept
+past their daily cap, a description could leak contact details into previews, the ping
+tree could exceed the number of attorneys named in the consent, and "Pass" declined even
+when you hit Cancel. Each got a fix and a regression test. Finding your own bugs before a
+reviewer does is the point.
 
 ## 5. Explaining it to a non-technical interviewer
 
@@ -128,7 +145,7 @@ Use the analogies in [ELI10.md](ELI10.md):
 
 | Metric | Value |
 |---|---|
-| Automated tests | 61 (unit + end-to-end API stories), about 2 s |
+| Automated tests | 104: unit, end-to-end API stories, and 4 Postgres concurrency tests |
 | Distribution models | 3 |
 | Docker services | 9 (4 for the router, 5 for eXo) |
 | Router image | Multi-stage, non-root, ~300 MB |

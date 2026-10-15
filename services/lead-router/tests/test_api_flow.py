@@ -198,7 +198,9 @@ def test_invalid_input_is_refused_before_anything_is_saved(client, db):
 def test_contact_details_stay_hidden_until_the_attorney_accepts(client):
     created = submit(client)
     avery = offer_for(client, detail(client, created["lead_id"]), "Avery Stone")
-    preview = client.get(f"/api/v1/offers/{avery['id']}", params={"t": token(avery["id"])}).json()
+    preview = client.get(
+        f"/api/v1/offers/{avery['id']}", headers={"X-Offer-Token": token(avery["id"])}
+    ).json()
     assert preview["contact"] is None
     assert "3125550142" not in str(preview) and "Rivera" not in str(preview)
 
@@ -209,7 +211,7 @@ def test_contact_details_stay_hidden_until_the_attorney_accepts(client):
 def test_a_forged_or_wrong_link_looks_like_a_missing_offer(client):
     created = submit(client)
     avery = offer_for(client, detail(client, created["lead_id"]), "Avery Stone")
-    r = client.get(f"/api/v1/offers/{avery['id']}", params={"t": "0" * 32})
+    r = client.get(f"/api/v1/offers/{avery['id']}", headers={"X-Offer-Token": "0" * 32})
     assert r.status_code == 404
     r = client.post(f"/api/v1/offers/{avery['id']}/accept", json={"token": "nope"})
     assert r.status_code == 404

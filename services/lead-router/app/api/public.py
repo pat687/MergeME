@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, status
+import ipaddress
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -16,6 +18,19 @@ from app.schemas import IntakeRequest, IntakeResponse
 from app.services import pipeline
 
 router = APIRouter()
+
+
+def client_ip(request: Request) -> str | None:
+    """The caller's address, only if it's a real IP (it's stored as consent evidence).
+
+    X-Forwarded-For is honored only from trusted proxies (uvicorn's
+    FORWARDED_ALLOW_IPS, default 127.0.0.1), so a client can't choose this value.
+    """
+    host = request.client.host if request.client else None
+    try:
+        return str(ipaddress.ip_address(host)) if host else None
+    except ValueError:
+        return None
 
 
 @router.get("/healthz", tags=["ops"], summary="Is the process alive?")
@@ -55,10 +70,13 @@ def intake(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> IntakeResponse:
-    meta = pipeline.RequestMeta(
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-    )
+    ip = client_ip(request)
+    if not request.app.state.intake_limiter.allow(ip or "unknown"):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many submissions from your network. Please wait a minute and try again.",
+        )
+    meta = pipeline.RequestMeta(ip_address=ip, user_agent=request.headers.get("user-agent"))
     lead = pipeline.process_intake(db, settings, inquiry, meta, utcnow())
     return IntakeResponse(
         lead_id=lead.id,

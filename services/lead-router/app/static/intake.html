@@ -29,7 +29,7 @@
     <fieldset>
       <legend>Where you are</legend>
       <div class="grid">
-        <label>ZIP code<input name="zip_code" inputmode="numeric" maxlength="5" autocomplete="postal-code" required></label>
+        <label>ZIP code<input name="zip_code" inputmode="numeric" maxlength="10" autocomplete="postal-code" required></label>
         <label>State<input name="state" maxlength="2" placeholder="IL" required></label>
       </div>
     </fieldset>
@@ -41,9 +41,10 @@
         <label>When did it happen? (optional)<input name="incident_date" type="date"></label>
       </div>
       <label style="margin-top:12px">What happened?
-        <textarea name="description" minlength="10" maxlength="2000" required
-          placeholder="A few sentences in your own words. Please don't include passwords or account numbers."></textarea>
+        <textarea name="description" minlength="10" maxlength="2000" required aria-describedby="description_hint"
+          placeholder="A few sentences in your own words."></textarea>
       </label>
+      <p class="small muted" id="description_hint">Attorneys read this before they contact you, so please leave out your name, phone, email, address and any account numbers. We ask for those above.</p>
       <label class="check"><input type="checkbox" name="injured"> I was injured</label>
       <label class="check"><input type="checkbox" name="medical_treatment"> I received medical treatment</label>
       <label class="check"><input type="checkbox" name="court_date_soon"> I have a court date coming up</label>
@@ -61,11 +62,11 @@
     </fieldset>
 
     <p class="error" id="error" role="alert"></p>
-    <button type="submit" id="submit">Send my inquiry</button>
+    <button type="submit" id="submit" disabled>Send my inquiry</button>
   </form>
 
   <section class="card" id="result" hidden aria-live="polite">
-    <h2 style="margin-top:0" id="result_title">Thank you</h2>
+    <h2 style="margin-top:0" tabindex="-1">Thank you</h2>
     <p id="result_message"></p>
     <p class="small muted">Reference number: <span class="mono" id="result_ref"></span></p>
   </section>
@@ -75,20 +76,57 @@
   import { api, h } from "/static/common.js";
 
   const form = document.getElementById("intake");
-  const meta = await api("/api/v1/meta");
-  document.title = `Find an Attorney - ${meta.platform_name}`;
-  document.getElementById("platform").textContent = meta.platform_name;
-  document.getElementById("disclosure").textContent = meta.disclosure;
-  document.getElementById("consent_text").textContent = meta.consent_text;
-  const select = document.getElementById("practice_area");
-  select.append(h("option", { value: "" }, "Choose one..."));
-  for (const area of meta.practice_areas) select.append(h("option", { value: area.value }, area.label));
+  const button = document.getElementById("submit");
+  const error = document.getElementById("error");
+  let meta = null;
 
+  // Plain-English messages per field instead of raw validation text.
+  const FRIENDLY = {
+    first_name: "Please enter your first name (letters only).",
+    last_name: "Please enter your last name (letters only).",
+    email: "Please enter a valid email address.",
+    phone: "Please enter a 10-digit US phone number.",
+    zip_code: "Please enter a 5-digit ZIP code.",
+    state: "Please enter a two-letter state code, like IL.",
+    practice_area: "Please choose the type of legal matter.",
+    description: "Please describe what happened in a sentence or two.",
+    incident_date: "Please enter a valid date.",
+  };
+
+  function clearFieldErrors() {
+    form.querySelectorAll(".field-error").forEach((el) => el.remove());
+    form.querySelectorAll("[aria-invalid]").forEach((el) => {
+      el.removeAttribute("aria-invalid");
+      if (el.dataset.describedby) el.setAttribute("aria-describedby", el.dataset.describedby);
+      else el.removeAttribute("aria-describedby");
+    });
+  }
+
+  function showFieldErrors(fields) {
+    let first = null;
+    for (const f of fields) {
+      const name = f.loc[f.loc.length - 1];
+      const input = form.elements[name];
+      if (!input || input.getAttribute("aria-invalid")) continue;
+      const id = `error_${name}`;
+      input.dataset.describedby = input.getAttribute("aria-describedby") || "";
+      input.setAttribute("aria-invalid", "true");
+      input.setAttribute("aria-describedby", `${id} ${input.dataset.describedby}`.trim());
+      (input.closest("label") || input.parentElement)
+        .append(h("span", { class: "field-error", id }, FRIENDLY[name] || "Please check this field."));
+      first ??= input;
+    }
+    first?.focus();
+    return Boolean(first);
+  }
+
+  // Attached before anything else loads, so the browser can never fall back to a
+  // plain form submit that would put someone's details in the page URL.
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const error = document.getElementById("error");
-    const button = document.getElementById("submit");
+    if (!meta) return;
     error.textContent = "";
+    clearFieldErrors();
     const data = Object.fromEntries(new FormData(form));
     const payload = {
       ...data,
@@ -103,6 +141,7 @@
     };
     if (!payload.consent) {
       error.textContent = "Please tick the consent box so attorneys are allowed to contact you.";
+      form.consent.focus();
       return;
     }
     button.disabled = true;
@@ -115,13 +154,30 @@
       document.getElementById("result_message").textContent = res.message;
       document.getElementById("result_ref").textContent = res.lead_id.slice(0, 8).toUpperCase();
       form.hidden = true;
-      document.getElementById("result").hidden = false;
+      const result = document.getElementById("result");
+      result.hidden = false;
+      result.querySelector("h2").focus();
     } catch (err) {
-      error.textContent = err.message;
+      const shown = err.status === 422 && showFieldErrors(err.fields);
+      error.textContent = shown ? "Please fix the highlighted fields." : err.message;
     } finally {
       button.disabled = false;
     }
   });
+
+  try {
+    meta = await api("/api/v1/meta");
+    document.title = `Find an Attorney - ${meta.platform_name}`;
+    document.getElementById("platform").textContent = meta.platform_name;
+    document.getElementById("disclosure").textContent = meta.disclosure;
+    document.getElementById("consent_text").textContent = meta.consent_text;
+    const select = document.getElementById("practice_area");
+    select.append(h("option", { value: "" }, "Choose one..."));
+    for (const area of meta.practice_areas) select.append(h("option", { value: area.value }, area.label));
+    button.disabled = false;
+  } catch {
+    error.textContent = "The form couldn't load. Please check your connection and refresh the page.";
+  }
 </script>
 </body>
 </html>

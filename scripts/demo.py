@@ -21,6 +21,7 @@ import urllib.request
 from datetime import date, timedelta
 
 BASE = os.environ.get("ROUTER_PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
+INBOX = f"http://localhost:{os.environ.get('MAILPIT_UI_PORT', '8025')}"
 KEY = os.environ.get("ROUTER_ADMIN_API_KEY", "dev-admin-key-change-me")
 RUN = f"{int(time.time()) % 100000:05d}"  # keeps emails unique so re-runs aren't duplicates
 
@@ -102,7 +103,7 @@ def offer_by(detail: dict, name: str, names: dict[int, str]) -> dict:
 
 
 def respond(offer: dict, action: str) -> tuple[int, dict]:
-    token = offer["link"].split("t=", 1)[1]
+    token = offer["link"].split("#t=", 1)[1]
     return call("POST", f"/api/v1/offers/{offer['id']}/{action}", {"token": token})
 
 
@@ -188,7 +189,7 @@ def main() -> None:
 
     print(f"\n{BOLD}Look around:{RESET}")
     print(f"  Dashboard   {BASE}/admin   (admin key is in your .env)")
-    print("  Inbox       http://localhost:8025   (every email the system sent)")
+    print(f"  Inbox       {INBOX}   (every email the system sent)")
     print(f"  API docs    {BASE}/docs")
 
 

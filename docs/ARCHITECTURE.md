@@ -7,7 +7,7 @@
 | Replace SharePoint with free, self-hosted software | eXo Platform Community 7.2 + ONLYOFFICE in Docker, behind Nginx |
 | Capture → scrub → score → distribute legal leads | A separate Lead Router service with a pure-logic core |
 | Three distribution models | Strategy-style planner: exclusive, shared, ping tree |
-| Comply with attorney-advertising rules | Flat-fee-only ledger, disclosures, consent evidence, PII-free previews |
+| Comply with attorney-advertising rules | Flat-fee-only ledger, disclosures, consent evidence, redacted previews, never more recipients than consented |
 | Explain every decision | Append-only audit trail per lead; score breakdown with reasons |
 | Never lose or duplicate side effects | Transactional outbox + idempotent billing |
 | Run on one machine, scale out later | Stateless API + separate worker; Postgres row locks for coordination |
@@ -227,24 +227,37 @@ sequenceDiagram
     R->>J: activate round 2, offer email, 90s
     Note over J: no answer
     W->>R: expire_due(now): round 2 expired
-    R->>S: activate round 3 (skipped if inactive or capped)
+    R->>S: activate round 3 (skipped if inactive or capped; never past the consented 3)
     S->>R: accept -> assigned, charged $70
 ```
 
 ## 6. Concurrency design
 
-Two problems, two tools:
+Four races, four tools:
 
 1. **Double assignment.** Two attorneys accept a shared lead together. The assignment is a
    single conditional update, `UPDATE leads SET assigned_attorney_id=:me WHERE id=:lead AND
    assigned_attorney_id IS NULL`. Exactly one transaction sees `rowcount == 1`.
-2. **Deadlocks.** Accept, decline and the expiry worker all modify a lead *and* its offers.
-   If one locked offer→lead and another lead→offer, they could deadlock. Every writer takes
-   `SELECT ... FOR UPDATE` on the **lead row first**, then touches offers. Same order
-   everywhere means no lock cycles.
+2. **Stale writes.** Every other state change is a compare-and-set too: an offer moves
+   `pending → accepted/declined/expired/skipped` only `WHERE status = 'pending'`, a queued
+   offer is activated only `WHERE status = 'queued'`, and a lead becomes `unsold` only
+   `WHERE status = 'offered' AND assigned_attorney_id IS NULL`. A writer working from
+   out-of-date data changes zero rows instead of overwriting a newer result.
+3. **Daily cap overrun.** An attorney with several pending offers accepts them all at once.
+   `accept` locks the attorney row and re-counts today's leads (in the business timezone)
+   before claiming; the exclusive path locks the territory owner the same way.
+4. **Duplicate sale.** The same person submits twice in the same instant. Each intake takes
+   `pg_advisory_xact_lock` on hashes of (email, practice area) and (phone, practice area),
+   in sorted order, before the duplicate check, so the second waits and then sees the first.
 
-On SQLite (local dev, tests) `FOR UPDATE` is a no-op and writes are serialized by SQLite
-itself, so the same code is correct on both databases.
+**Deadlocks** are avoided by taking row locks in one fixed order everywhere: the lead row,
+then the attorney row, then offers. Accept, decline and the expiry worker all follow it.
+
+On SQLite (local dev, tests) `FOR UPDATE` and advisory locks are no-ops; SQLite allows one
+writer at a time, and the compare-and-set updates keep racing readers from overwriting
+each other. The real proof runs on Postgres: [`tests/test_concurrency_postgres.py`](../services/lead-router/tests/test_concurrency_postgres.py)
+releases several threads through a barrier at once (simultaneous accepts, identical
+intakes, cap races, accept vs. expiry), and CI runs it against a Postgres service.
 
 The outbox worker uses `FOR UPDATE SKIP LOCKED`, so several workers can drain the queue
 in parallel without sending a message twice.
@@ -266,6 +279,9 @@ flowchart LR
 - If SMTP or eXo is down, nothing is lost. Retries back off exponentially, and after
   `ROUTER_OUTBOX_MAX_ATTEMPTS` the message is parked (`failed=true`) and shown on the dashboard.
 - Unknown message kinds fail loudly instead of being dropped.
+- Each cycle has a time budget (`ROUTER_OUTBOX_TIME_BUDGET_SECONDS`, default 5 s) and network
+  calls have short timeouts (SMTP 5 s, eXo 5 s connect / 10 s read), so a hung mail or eXo
+  server can't stop the same worker from timing out offers on schedule.
 
 ## 8. eXo integration
 
@@ -287,10 +303,12 @@ for building eXo with the add-on and the version-matching caveat.
 | Concern | Control |
 |---|---|
 | Admin API | `X-Admin-Key` header, compared in constant time (`hmac.compare_digest`) |
-| Attorney actions | HMAC-SHA256 signed links; nothing stored; invalid token → 404, the same as a missing offer |
-| Consumer PII | Hidden from offer previews and offer emails until accepted |
+| Attorney actions | HMAC-SHA256 signed links; nothing stored; invalid or non-ASCII token → 404, the same as a missing offer |
+| Token in logs | The token sits after `#` in the link (never sent to the server); the page sends it in an `X-Offer-Token` header, which isn't logged |
+| Consumer PII | Name, phone and email withheld until accepted; the description is redacted (names, phones, emails, street addresses) in previews and offer emails |
 | XSS | Pages build DOM with `textContent` only; no `innerHTML` with user data |
-| Bots | Honeypot field, link-spam and disposable-domain checks |
+| Bots and abuse | Honeypot field, link-spam and disposable-domain checks, names limited to letters (no URLs in receipts), per-IP intake rate limit |
+| Consent IP | Uvicorn honors `X-Forwarded-For` only from `FORWARDED_ALLOW_IPS` (default 127.0.0.1); the stored value must parse as an IP |
 | Secrets | `make init` generates random values into `.env` (mode 600); compose refuses to start without them |
 | Container | Multi-stage build, non-root user (uid 10001), health checks |
 | Timestamps | Stored as UTC; naive datetimes are refused at the database boundary |
@@ -300,13 +318,16 @@ for building eXo with the add-on and the version-matching caveat.
 
 Every setting is an environment variable with the `ROUTER_` prefix (see
 [`app/config.py`](../services/lead-router/app/config.py) and [`.env.example`](../.env.example)).
-Examples:
+`docker-compose.yml` passes every one of them through from `.env`; an empty value means
+"use the default". Set them in `.env` and run `make up` again. Examples:
 
 ```bash
 ROUTER_DISTRIBUTION_POLICY='{"personal_injury":"ping_tree","family_law":"shared","*":"shared"}'
 ROUTER_FLOOR_PRICE_CENTS='{"personal_injury":5000,"*":1500}'
-ROUTER_SHARED_MAX_ATTORNEYS=3
+ROUTER_SHARED_MAX_ATTORNEYS=3          # also the number named in the consent text
 ROUTER_PING_OFFER_TTL_SECONDS=90
+ROUTER_BUSINESS_TIMEZONE=America/Chicago
+ROUTER_INTAKE_RATE_LIMIT_PER_MINUTE=10
 ```
 
 ## 11. Scaling path
@@ -318,6 +339,7 @@ ROUTER_PING_OFFER_TTL_SECONDS=90
 | More attorneys (1000s) | Pre-filter candidates in SQL (state, practice area, ZIP3 index) instead of in Python |
 | Faster ping trees | Shorten worker interval, or move expiry to a delayed queue (e.g. Postgres `LISTEN/NOTIFY`, Redis) |
 | Many workers | Already safe: `SKIP LOCKED` on the outbox, lead-row locks on expiry |
+| Many API replicas | The intake rate limiter is per process; add a shared limit at the proxy (or Redis) |
 | Schema changes | Add Alembic migrations (tables are created at startup today) |
 
 ## 12. Failure modes
@@ -327,6 +349,7 @@ ROUTER_PING_OFFER_TTL_SECONDS=90
 | SMTP down | Emails wait in the outbox; dashboard shows the pending count | Automatic retry with backoff |
 | eXo down | Sync messages retry; routing unaffected | Automatic |
 | Worker down | Offers don't time out on schedule; the offer page and accept/decline still expire overdue offers when they're touched | Restart worker; it catches up |
-| Router DB down | `/readyz` fails, container restarts | Postgres restart; compose dependency |
+| Router DB down | `/readyz` returns 500 and the container is marked unhealthy (Docker doesn't restart it for that); requests fail | Once Postgres is back, `pool_pre_ping` reconnects automatically |
+| SMTP or eXo hangs | Each worker cycle stops sending after its time budget; offers still expire on schedule | Messages retry until the server answers |
 | Two accepts at once | One 200, one 409 | By design |
 | Billing run twice | Second run creates nothing | Unique key on ledger |

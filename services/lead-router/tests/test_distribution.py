@@ -23,13 +23,13 @@ def lawyer(attorney_id: int, bid: int = 5000, **overrides) -> Candidate:
     return Candidate(**data)
 
 
-def plan(model, candidates, owner=None, shared_max=3, floor=1000):
+def plan(model, candidates, owner=None, max_recipients=3, floor=1000):
     return plan_distribution(
         **WHERE,
         territory_owner=owner,
         candidates=candidates,
         policy_model=model,
-        shared_max=shared_max,
+        max_recipients=max_recipients,
         floor_cents=floor,
     )
 
@@ -70,7 +70,7 @@ def test_unavailable_exclusive_owner_falls_back_to_the_normal_model():
 
 # --- Shared ----------------------------------------------------------------
 def test_shared_asks_up_to_n_attorneys_at_once():
-    result = plan(DistributionModel.SHARED, [lawyer(i) for i in range(1, 6)], shared_max=3)
+    result = plan(DistributionModel.SHARED, [lawyer(i) for i in range(1, 6)], max_recipients=3)
     assert len(result.offers) == 3
     assert {o.status for o in result.offers} == {OfferStatus.PENDING}
     assert len([r for r in result.skipped.values() if "pool already full" in r]) == 2
@@ -78,7 +78,7 @@ def test_shared_asks_up_to_n_attorneys_at_once():
 
 def test_shared_favours_attorneys_with_fewer_leads_today():
     busy, idle = lawyer(1, bid=9000, accepted_today=5), lawyer(2, bid=3000)
-    result = plan(DistributionModel.SHARED, [busy, idle], shared_max=1)
+    result = plan(DistributionModel.SHARED, [busy, idle], max_recipients=1)
     assert result.offers[0].attorney_id == 2
 
 
@@ -117,3 +117,10 @@ def test_no_eligible_attorney_means_no_buyer():
     result = plan(DistributionModel.SHARED, [lawyer(1, bar_states=["WI"])])
     assert not result.has_buyer
     assert result.skipped == {1: "not licensed in IL"}
+
+
+def test_ping_tree_never_lines_up_more_attorneys_than_the_consent_allows():
+    bidders = [lawyer(i, bid=5000 + i * 100) for i in range(1, 8)]
+    result = plan(DistributionModel.PING_TREE, bidders, max_recipients=3)
+    assert [o.attorney_id for o in result.offers] == [7, 6, 5]
+    assert sum("line-up already full" in r for r in result.skipped.values()) == 4

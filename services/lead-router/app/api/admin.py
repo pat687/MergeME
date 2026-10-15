@@ -13,6 +13,7 @@ from app import worker
 from app.api.deps import get_db, get_settings, require_admin
 from app.config import Settings
 from app.db import utcnow
+from app.domain.matching import covers_zip
 from app.domain.types import DistributionModel, LeadStatus, OfferStatus
 from app.models import Attorney, Lead, LedgerEntry, Offer, OutboxMessage, Territory
 from app.schemas import (
@@ -172,7 +173,18 @@ def list_territories(db: Session = Depends(get_db)) -> list[Territory]:
 
 @router.post("/territories", response_model=TerritoryOut, status_code=status.HTTP_201_CREATED)
 def create_territory(body: TerritoryCreate, db: Session = Depends(get_db)) -> Territory:
-    _get_or_404(db, Attorney, body.attorney_id)
+    owner = _get_or_404(db, Attorney, body.attorney_id)
+    # Selling a territory the owner could never receive leads in would just be rent
+    # for nothing, so refuse it up front.
+    if body.practice_area not in owner.bids_cents:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"{owner.name} doesn't handle {body.practice_area.label}",
+        )
+    if not covers_zip(owner.service_zips, body.zip_code):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"{owner.name} doesn't cover ZIP {body.zip_code}"
+        )
     territory = Territory(**body.model_dump(mode="json"))
     db.add(territory)
     try:

@@ -13,10 +13,11 @@ is saved, or none of it is.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -33,6 +34,31 @@ from app.services import audit, emails, exo_sync, offers, outbox
 class RequestMeta:
     ip_address: str | None = None
     user_agent: str | None = None
+
+
+def _lock_key(value: str) -> int:
+    """A stable signed 64-bit number for pg_advisory_xact_lock."""
+    return int.from_bytes(hashlib.sha256(value.encode()).digest()[:8], "big", signed=True)
+
+
+def _serialize_duplicate_check(db: Session, lead: Lead) -> None:
+    """Make two identical submissions arriving together take turns.
+
+    Without this, both could run the duplicate check before either is saved, and
+    the same person would be sold twice. Postgres advisory locks are held until the
+    transaction ends; keys are taken in sorted order so two requests can't deadlock.
+    SQLite already allows only one writer at a time.
+    """
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    keys = sorted(
+        {
+            _lock_key(f"email:{lead.email}|{lead.practice_area}"),
+            _lock_key(f"phone:{lead.phone}|{lead.practice_area}"),
+        }
+    )
+    for key in keys:
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
 
 
 def _is_duplicate(db: Session, lead: Lead, now: datetime, window_days: int) -> bool:
@@ -70,15 +96,21 @@ def _snapshot(attorney: Attorney, accepted_today: dict[int, int]) -> Candidate:
 def _plan(
     db: Session, settings: Settings, inquiry: IntakeRequest, now: datetime
 ) -> DistributionPlan:
-    counts = offers.accepted_today(db, now)
-    # Fine at hundreds of attorneys. At larger scale, pre-filter by state/ZIP in SQL.
-    candidates = [_snapshot(a, counts) for a in db.scalars(select(Attorney)).all()]
     territory = db.scalar(
         select(Territory).where(
             Territory.practice_area == inquiry.practice_area,
             Territory.zip_code == inquiry.zip_code,
         )
     )
+    if territory is not None:
+        # Exclusive leads are assigned on the spot, so lock the owner before counting
+        # their leads today: two intakes at once can't both slip under the daily cap.
+        db.execute(
+            select(Attorney.id).where(Attorney.id == territory.attorney_id).with_for_update()
+        )
+    counts = offers.accepted_today(db, settings, now)
+    # Fine at hundreds of attorneys. At larger scale, pre-filter by state/ZIP in SQL.
+    candidates = [_snapshot(a, counts) for a in db.scalars(select(Attorney)).all()]
     owner = next(
         (c for c in candidates if territory and c.attorney_id == territory.attorney_id), None
     )
@@ -89,7 +121,7 @@ def _plan(
         territory_owner=owner,
         candidates=candidates,
         policy_model=DistributionModel(settings.policy_for(inquiry.practice_area)),
-        shared_max=settings.shared_max_attorneys,
+        max_recipients=settings.shared_max_attorneys,
         floor_cents=settings.floor_for(inquiry.practice_area),
     )
 
@@ -112,8 +144,11 @@ def process_intake(
     audit.record(db, lead.id, "received", practice_area=lead.practice_area, zip_code=lead.zip_code)
 
     # 2) Scrub ---------------------------------------------------------------
+    _serialize_duplicate_check(db, lead)
     duplicate = _is_duplicate(db, lead, now, settings.duplicate_window_days)
-    checked = scrubbing.scrub(inquiry, is_duplicate=duplicate)
+    checked = scrubbing.scrub(
+        inquiry, is_duplicate=duplicate, consent_version=settings.disclosure_version
+    )
     if not checked.ok:
         lead.status = LeadStatus.REJECTED
         lead.rejection_reasons = checked.reasons

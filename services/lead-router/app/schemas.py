@@ -11,7 +11,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.domain.types import (
     BillingPlan,
@@ -79,10 +79,46 @@ US_STATES = frozenset(
     }
 )
 ZIP_RE = re.compile(r"^\d{5}$")
+ZIP_PLUS4_RE = re.compile(r"^(\d{5})(?:-\d{4})?$")
+NAME_PUNCTUATION = frozenset(" '-.\u2019")
 
 
 def _digits(value: str) -> str:
     return re.sub(r"\D", "", value)
+
+
+def _check_name(value: str) -> str:
+    """Letters in any language plus spaces, hyphens, apostrophes and periods.
+
+    Blocks URLs, emails and digits, so the consumer receipt ("Hi <name>") can't be
+    turned into a phishing message sent from our domain.
+    """
+    if not any(ch.isalpha() for ch in value) or not all(
+        ch.isalpha() or ch in NAME_PUNCTUATION for ch in value
+    ):
+        raise ValueError("use letters only (spaces, hyphens, apostrophes and periods are fine)")
+    return value
+
+
+def _check_states(value: list[str]) -> list[str]:
+    cleaned = [s.upper() for s in value]
+    bad = [s for s in cleaned if s not in US_STATES]
+    if bad:
+        raise ValueError(f"unknown state codes: {bad}")
+    return cleaned
+
+
+def _check_service_zips(value: list[str]) -> list[str]:
+    bad = [z for z in value if not re.fullmatch(r"\d{3}|\d{5}", z)]
+    if bad:
+        raise ValueError(f"service_zips must be 3 or 5 digits: {bad}")
+    return value
+
+
+def _check_bids(value: dict[PracticeArea, int]) -> dict[PracticeArea, int]:
+    if any(cents < 0 for cents in value.values()):
+        raise ValueError("bids must be zero or more cents")
+    return value
 
 
 # --------------------------------------------------------------------------- #
@@ -107,10 +143,15 @@ class IntakeRequest(BaseModel):
     has_attorney: bool = False
     court_date_soon: bool = False
     consent: bool = Field(description="Agreed to be contacted by participating attorneys")
-    consent_version: str
+    consent_version: str = Field(min_length=1, max_length=40)
     # Honeypot: hidden from humans by CSS. Bots fill every field, people don't.
     website: str = ""
     utm_source: str | None = Field(default=None, max_length=120)
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def _names(cls, value: str) -> str:
+        return _check_name(value)
 
     @field_validator("phone")
     @classmethod
@@ -125,10 +166,10 @@ class IntakeRequest(BaseModel):
     @field_validator("zip_code")
     @classmethod
     def _check_zip(cls, value: str) -> str:
-        value = value[:5]
-        if not ZIP_RE.match(value):
-            raise ValueError("zip_code must be 5 digits")
-        return value
+        match = ZIP_PLUS4_RE.match(value)
+        if not match:
+            raise ValueError("zip_code must be 5 digits (or ZIP+4, like 60614-1234)")
+        return match.group(1)
 
     @field_validator("state")
     @classmethod
@@ -178,27 +219,18 @@ class AttorneyBase(BaseModel):
 
     @field_validator("bar_states")
     @classmethod
-    def _check_states(cls, value: list[str]) -> list[str]:
-        cleaned = [s.upper() for s in value]
-        bad = [s for s in cleaned if s not in US_STATES]
-        if bad:
-            raise ValueError(f"unknown state codes: {bad}")
-        return cleaned
+    def _states(cls, value: list[str]) -> list[str]:
+        return _check_states(value)
 
     @field_validator("service_zips")
     @classmethod
-    def _check_zips(cls, value: list[str]) -> list[str]:
-        bad = [z for z in value if not re.fullmatch(r"\d{3}|\d{5}", z)]
-        if bad:
-            raise ValueError(f"service_zips must be 3 or 5 digits: {bad}")
-        return value
+    def _zips(cls, value: list[str]) -> list[str]:
+        return _check_service_zips(value)
 
     @field_validator("bids_cents")
     @classmethod
-    def _check_bids(cls, value: dict[PracticeArea, int]) -> dict[PracticeArea, int]:
-        if any(cents < 0 for cents in value.values()):
-            raise ValueError("bids must be zero or more cents")
-        return value
+    def _bids(cls, value: dict[PracticeArea, int]) -> dict[PracticeArea, int]:
+        return _check_bids(value)
 
 
 class AttorneyCreate(AttorneyBase):
@@ -206,13 +238,34 @@ class AttorneyCreate(AttorneyBase):
 
 
 class AttorneyUpdate(BaseModel):
+    """Partial update. Same rules as creating an attorney; only exo_username may be cleared."""
+
     model_config = ConfigDict(extra="forbid")
 
     active: bool | None = None
     daily_cap: int | None = Field(default=None, ge=1, le=500)
-    bids_cents: dict[PracticeArea, int] | None = None
-    service_zips: list[str] | None = None
+    bids_cents: dict[PracticeArea, int] | None = Field(default=None, min_length=1)
+    service_zips: list[str] | None = Field(default=None, min_length=1)
     exo_username: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_nulls(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            nulls = sorted(k for k, v in data.items() if v is None and k != "exo_username")
+            if nulls:
+                raise ValueError(f"these fields cannot be null: {nulls}")
+        return data
+
+    @field_validator("service_zips")
+    @classmethod
+    def _zips(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else _check_service_zips(value)
+
+    @field_validator("bids_cents")
+    @classmethod
+    def _bids(cls, value: dict[PracticeArea, int] | None) -> dict[PracticeArea, int] | None:
+        return None if value is None else _check_bids(value)
 
 
 class AttorneyOut(AttorneyBase):
@@ -266,6 +319,9 @@ class OfferView(BaseModel):
     summary: str
     price_cents: int
     expires_at: datetime | None
+    seconds_left: int | None = Field(
+        default=None, description="Server-computed time left; clients count down from this"
+    )
     contact: dict[str, Any] | None = None
     notice: str | None = None
 

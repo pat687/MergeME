@@ -24,5 +24,7 @@ def require_admin(
     x_admin_key: str = Header(default="", description="Admin API key"),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    if not hmac.compare_digest(x_admin_key, settings.admin_api_key):
+    if not hmac.compare_digest(
+        x_admin_key.encode("utf-8", "replace"), settings.admin_api_key.encode()
+    ):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "admin key required")

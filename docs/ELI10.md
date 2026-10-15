@@ -92,13 +92,19 @@ If two press the button at the *exact* same moment, the computer is built so onl
 can win. No ties, no fights.
 
 **Ping tree: "Auction line."**
-Lawyers line up by how much they offered to pay. The top one gets asked first and has 90
-seconds to answer. If they say no or don't answer, the next one in line is asked, and so on.
+Up to three lawyers line up by how much they offered to pay. The top one gets asked first
+and has 90 seconds to answer. If they say no or don't answer, the next one in line is asked.
+
+Why only three? Jamie's checkbox said "up to 3 lawyers may contact me", so the computer
+never shows the request to a fourth. And a lawyer who has hit their daily limit can't
+sneak one more, even by clicking fast.
 
 ### Step 6: Keeping it private
 
-The lawyer being asked only sees a **preview**: what kind of case, which neighborhood, and
-the grade. Jamie's name and phone number stay hidden until a lawyer actually says yes.
+The lawyer being asked only sees a **preview**: what kind of case, which neighborhood, the
+grade, and Jamie's story with anything private blacked out. If Jamie wrote "call me at
+312-555-0142" in the story, the lawyer sees "call me at [redacted]". Jamie's name, phone
+and email are only shown once a lawyer actually says yes.
 
 ### Step 7: Paying fairly
 

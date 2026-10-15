@@ -17,7 +17,11 @@ DEV_SIGNING_SECRET = "dev-signing-secret-change-me"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ROUTER_", env_file=".env", extra="ignore")
+    # env_ignore_empty: docker-compose passes every setting through as ${VAR:-}; an empty
+    # value then means "use the default" instead of failing to parse.
+    model_config = SettingsConfigDict(
+        env_prefix="ROUTER_", env_file=".env", extra="ignore", env_ignore_empty=True
+    )
 
     # --- Core -----------------------------------------------------------------
     database_url: str = "sqlite:///./lead_router.db"
@@ -35,6 +39,8 @@ class Settings(BaseSettings):
     worker_interval_seconds: float = 2.0
     worker_heartbeat_file: str = "/tmp/lead-worker.heartbeat"
     outbox_max_attempts: int = 5
+    # Stop sending after this long so a slow SMTP or eXo server can't delay offer timeouts.
+    outbox_time_budget_seconds: float = 5.0
 
     # --- Distribution rules ---------------------------------------------------
     # Which model each practice area uses when no one owns the territory
@@ -47,6 +53,8 @@ class Settings(BaseSettings):
             "*": "shared",
         }
     )
+    # The most attorneys any one inquiry is shared with, in every model. It's also the
+    # number written into the consent text, so the two always match.
     shared_max_attorneys: int = 3
     shared_offer_ttl_seconds: int = 15 * 60
     ping_offer_ttl_seconds: int = 90
@@ -60,6 +68,10 @@ class Settings(BaseSettings):
         }
     )
     duplicate_window_days: int = 30
+    # Daily lead caps reset at midnight in this timezone, not at midnight UTC.
+    business_timezone: str = "America/Chicago"
+    # Per-IP limit on intake submissions (0 turns it off). Put a proxy limit in front too.
+    intake_rate_limit_per_minute: int = 10
 
     # --- Email (SMTP) ---------------------------------------------------------
     smtp_host: str | None = None

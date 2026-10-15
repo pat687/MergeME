@@ -26,6 +26,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, UTCDateTime, utcnow
+from app.domain import compliance
+
+# none_as_null: a Python None becomes SQL NULL (caught by NOT NULL) instead of JSON 'null'.
+JSONField = JSON(none_as_null=True)
 
 
 def new_id() -> str:
@@ -40,9 +44,9 @@ class Attorney(Base):
     firm: Mapped[str] = mapped_column(String(160))
     email: Mapped[str] = mapped_column(String(254))
     phone: Mapped[str | None] = mapped_column(String(20))
-    bar_states: Mapped[list[str]] = mapped_column(JSON)
-    service_zips: Mapped[list[str]] = mapped_column(JSON)
-    bids_cents: Mapped[dict[str, int]] = mapped_column(JSON)
+    bar_states: Mapped[list[str]] = mapped_column(JSONField)
+    service_zips: Mapped[list[str]] = mapped_column(JSONField)
+    bids_cents: Mapped[dict[str, int]] = mapped_column(JSONField)
     plan: Mapped[str] = mapped_column(String(20))
     monthly_fee_cents: Mapped[int] = mapped_column(Integer, default=0)
     daily_cap: Mapped[int] = mapped_column(Integer, default=10)
@@ -101,11 +105,11 @@ class Lead(Base):
 
     # What the system decided
     status: Mapped[str] = mapped_column(String(20), index=True)
-    rejection_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    rejection_reasons: Mapped[list[str]] = mapped_column(JSONField, default=list)
     score: Mapped[int | None] = mapped_column(Integer)
     tier: Mapped[str | None] = mapped_column(String(1))
-    score_breakdown: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    flags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    score_breakdown: Mapped[list[dict[str, Any]]] = mapped_column(JSONField, default=list)
+    flags: Mapped[list[str]] = mapped_column(JSONField, default=list)
     distribution_model: Mapped[str | None] = mapped_column(String(20))
     assigned_attorney_id: Mapped[int | None] = mapped_column(ForeignKey("attorneys.id"))
     assigned_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -114,8 +118,18 @@ class Lead(Base):
     audit: Mapped[list[AuditEvent]] = relationship(order_by="AuditEvent.id")
 
     def summary(self) -> str:
-        """A short, contact-free description that's safe to show before an attorney accepts."""
-        text = " ".join(self.description.split())
+        """The description with contact details redacted, shortened for offer previews.
+
+        This is what attorneys see before they accept. The full description is only
+        released with the contact details, after acceptance.
+        """
+        text = compliance.redact(
+            self.description,
+            names=(self.first_name, self.last_name),
+            email=self.email,
+            phone=self.phone,
+        )
+        text = " ".join(text.split())
         return text if len(text) <= 280 else text[:277] + "..."
 
 
@@ -163,7 +177,7 @@ class AuditEvent(Base):
     lead_id: Mapped[str] = mapped_column(ForeignKey("leads.id"), index=True)
     at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     event: Mapped[str] = mapped_column(String(40))
-    detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONField, default=dict)
 
 
 class OutboxMessage(Base):
@@ -179,7 +193,7 @@ class OutboxMessage(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     kind: Mapped[str] = mapped_column(String(40))
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONField)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)

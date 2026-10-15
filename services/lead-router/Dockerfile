@@ -22,5 +22,7 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2)"
 
 # The same image runs the worker: `python -m app.worker` (see docker-compose.yml).
+# --proxy-headers honors X-Forwarded-For only from the addresses in FORWARDED_ALLOW_IPS
+# (default 127.0.0.1), so clients can't forge the IP recorded as consent evidence.
 CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", \
-     "--proxy-headers", "--forwarded-allow-ips", "*"]
+     "--proxy-headers"]

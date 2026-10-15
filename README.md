@@ -6,7 +6,7 @@ attorneys. It's built to follow attorney-advertising ethics rules from the start
 
 [![CI](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml)
 ![Python 3.13](https://img.shields.io/badge/python-3.13-blue)
-![Tests](https://img.shields.io/badge/tests-61%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-104%20passing-brightgreen)
 ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-informational)
 
 ---
@@ -56,9 +56,7 @@ Everything is free and open source, and runs on one machine with `docker compose
 
 ```mermaid
 flowchart LR
-    subgraph Public
-        C([Consumer]) -->|intake form| R
-    end
+    C([Consumer])
 
     subgraph Router["Lead Router (FastAPI)"]
         R[Intake API] --> S[Scrub] --> SC[Score] --> M[Match] --> D{Distribute}
@@ -71,6 +69,7 @@ flowchart LR
         A1 & O --> OB[(Outbox)]
     end
 
+    C -->|intake form| R
     W[[Worker]] -->|expire offers,<br/>next bidder| O
     W -->|send| OB
     OB -->|email| MP[Mailpit / SMTP]
@@ -124,7 +123,7 @@ Run `make` on its own to list every command.
 |---|---|
 | ![Intake form](docs/images/intake-form.png) | ![Dashboard](docs/images/dashboard.png) |
 
-| Attorney offer: preview, no personal data | After accepting: contact details released |
+| Attorney offer: preview with contact details redacted | After accepting: contact details released |
 |---|---|
 | ![Offer preview](docs/images/offer-preview.png) | ![Offer accepted](docs/images/offer-accepted.png) |
 
@@ -134,10 +133,10 @@ Run `make` on its own to list every command.
 
 | Check | Result |
 |---|---|
-| Unit and API tests (`make test`) | 61 passed |
+| Unit and API tests (`make test`) | 100 passed, plus 4 concurrency tests that run against real Postgres (in CI, or with `TEST_POSTGRES_URL`) |
 | Lint and format (`ruff`) | Clean |
 | Router stack in Docker on PostgreSQL (`make up`) | Healthy; `make demo` meets all of its built-in expectations |
-| Emails through the outbox to Mailpit | 12 of 12 delivered; offer emails contain no consumer contact details |
+| Emails through the outbox to Mailpit | 12 of 12 delivered; contact fields withheld from offer emails and the description redacted |
 | Pages in headless Chromium (desktop, phone, dark mode) | No console errors, no horizontal scrolling on phone |
 | Full eXo profile (`make up-full`) on a fresh database | All services healthy in about 3.5 minutes; login page 200 through Nginx; first-run Account Setup shown |
 | eXo lead-capture add-on image (`make exo-addon`) | **Not built here** (eXo's Maven repository was unreachable from the build sandbox). See [infra/exo/README.md](infra/exo/README.md). |
@@ -204,10 +203,14 @@ That's why the business rules read like a spec and test in milliseconds.
 |---|---|---|---|---|
 | **Exclusive** | An attorney rents this ZIP + practice area | Only the owner | Owner, instantly | Included in the monthly territory fee |
 | **Shared** (speed to lead) | Default for most practice areas | Up to 3 at once, fewest-leads-today first | First to accept | Each attorney's own flat price |
-| **Ping tree** | Personal injury, med-mal, workers' comp | One at a time, highest bid first | First "yes" down the line | The winner's own bid |
+| **Ping tree** | Personal injury, med-mal, workers' comp | Up to 3, one at a time, highest bid first | First "yes" down the line | The winner's own bid |
 
-All three are configurable through environment variables (`ROUTER_DISTRIBUTION_POLICY`,
-`ROUTER_SHARED_MAX_ATTORNEYS`, time limits and floor prices). No code changes needed.
+"Up to 3" is the number the consumer agrees to in the consent text, and no model ever
+goes past it. Daily caps and the active flag are checked again at the moment an attorney
+accepts, not just when the offer goes out.
+
+All of it is configurable in `.env` (`ROUTER_DISTRIBUTION_POLICY`,
+`ROUTER_SHARED_MAX_ATTORNEYS`, time limits, floor prices, business timezone). No code changes needed.
 
 ---
 
@@ -223,7 +226,11 @@ This system is built to stay inside attorney-advertising rules (ABA Model Rules 
 - **Honest consumer wording:** "attorney advertising", "not a law firm", "attorneys pay to
   receive inquiries", "we do not recommend any attorney and have not evaluated your matter".
 - **Consent evidence on every lead:** exact text, version, timestamp, IP and user agent.
-- **Contact details stay hidden** until an attorney accepts; offer emails contain no personal data.
+- **Contact details stay hidden** until an attorney accepts. Name, phone and email are
+  withheld from offers, and the free-text description is redacted (names, phone numbers,
+  emails and street addresses) before attorneys see it. The form also asks people not to
+  type contact details there.
+- **Never shared beyond consent:** no inquiry goes to more attorneys than the consent text names.
 - **No dead ends:** if no attorney covers the area, the person is pointed to their state bar's
   referral service.
 
@@ -234,21 +241,29 @@ This system is built to stay inside attorney-advertising rules (ABA Model Rules 
 ## Engineering highlights (the interview version)
 
 - **Race-safe "first click wins."** Two attorneys accepting at the same moment can't both
-  get the lead. A compare-and-set update (`UPDATE ... WHERE assigned_attorney_id IS NULL`)
-  plus consistent lock ordering (lead row before offer rows) prevents double-assignment *and*
-  deadlocks. Tested in [`test_api_flow.py`](services/lead-router/tests/test_api_flow.py).
+  get the lead, and an attorney can't blow through their daily cap by accepting several
+  offers at once. Every state change is a compare-and-set (`UPDATE ... WHERE status =
+  'pending'`), locks are always taken in the same order (lead row, then attorney row), and
+  identical intakes take turns through a Postgres advisory lock. Proven with real threads on
+  real Postgres in [`test_concurrency_postgres.py`](services/lead-router/tests/test_concurrency_postgres.py),
+  and each test was checked to fail when its fix is removed.
 - **Transactional outbox.** Emails and eXo updates are written in the same database
   transaction as the change that caused them, then delivered by the worker with exponential
   backoff. No lost emails, and no emails about changes that rolled back.
 - **Explainability.** Every lead has an append-only audit trail: who was skipped and why,
   every score point, every offer, every timeout. The dashboard shows it.
 - **Signed links, no passwords.** Attorneys act through HMAC-signed links. Nothing to store,
-  and they can't be forged. A bad link looks exactly like a missing offer, so offer IDs
-  can't be probed.
+  and they can't be forged. The token sits after `#` in the link, so it never reaches server
+  logs, and a bad link looks exactly like a missing offer, so offer IDs can't be probed.
 - **12-factor config.** One image runs both API and worker. All settings come from the
   environment, with random secrets generated by `make init`.
 - **Secure defaults.** Non-root container, XSS-safe rendering (no `innerHTML` with user data),
-  constant-time key comparison, timezone-safe timestamps, PII-free offer previews.
+  constant-time key comparison, per-IP intake rate limit, forged `X-Forwarded-For` ignored
+  (the consent IP can't be faked), timezone-safe timestamps, redacted offer previews.
+- **Reviewed adversarially.** Before merge, six independent AI reviewers went through the PR,
+  and three skeptics tried to disprove each finding. The 40 findings that survived (cap
+  bypass, PII in previews, a ping-tree consent overrun, UI races and more) were fixed, each
+  with a regression test.
 
 Ready-made talking points and likely interview questions:
 **[docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md)**.
@@ -278,7 +293,7 @@ barrgo-ai-stack/
 │   │   ├── schemas.py          # request/response validation
 │   │   ├── worker.py           # background worker
 │   │   └── seed.py             # six fictional demo attorneys
-│   ├── tests/                  # 61 tests: unit + end-to-end API stories
+│   ├── tests/                  # 104 tests: unit, API stories, Postgres concurrency
 │   └── Dockerfile              # multi-stage, non-root
 └── docs/                       # architecture, compliance, migration, runbook, ADRs, ELI10
 ```
@@ -306,11 +321,12 @@ barrgo-ai-stack/
 cd services/lead-router
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-pytest                      # 61 tests, about 2 seconds
+pytest                      # 100 tests in ~4 s (+4 with TEST_POSTGRES_URL set)
 ruff check . && ruff format --check .
 uvicorn app.main:create_app --factory --reload   # SQLite, embedded worker, http://localhost:8000
 python -m app.seed          # demo attorneys
 ```
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint, tests, a Docker build,
-validation of both compose profiles, and a live smoke test of the containerized stack on every push.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint, all tests (the concurrency
+tests against a real Postgres service), a Docker build, validation of both compose profiles, and a
+live smoke test of the containerized stack on every pull request.

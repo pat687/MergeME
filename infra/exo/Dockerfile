@@ -5,12 +5,13 @@
 # especially the version-matching table: the add-on must target your eXo version.
 #
 #   docker build \
-#     --build-arg EXO_IMAGE=exoplatform/exo-community:7.2.0 \
-#     --build-arg LEADCAPTURE_REF=develop \
-#     -t barrgo/exo-leadcapture:7.2.0 infra/exo
+#     --build-arg EXO_IMAGE=exoplatform/exo-community:7.0.0 \
+#     --build-arg LEADCAPTURE_REF=1.0.0-M42 \
+#     -t barrgo/exo-leadcapture:local infra/exo
 
-ARG EXO_IMAGE=exoplatform/exo-community:7.2.0
-ARG LEADCAPTURE_REF=develop
+# Defaults are a matching pair: lead-capture 1.0.0-M42 is built against eXo 7.0.
+ARG EXO_IMAGE=exoplatform/exo-community:7.0.0
+ARG LEADCAPTURE_REF=1.0.0-M42
 
 # ---- 1. Compile the add-on ----------------------------------------------------
 FROM maven:3.9-eclipse-temurin-21 AS addon

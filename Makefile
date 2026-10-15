@@ -3,8 +3,15 @@
 ROUTER := services/lead-router
 COMPOSE := docker compose
 PY ?= python3
-EXO_BASE_IMAGE ?= exoplatform/exo-community:7.2.0
-LEADCAPTURE_REF ?= develop
+# Add-on build defaults: lead-capture 1.0.0-M42 is built against eXo 7.0 (see infra/exo/README.md).
+EXO_BASE_IMAGE ?= exoplatform/exo-community:7.0.0
+LEADCAPTURE_REF ?= 1.0.0-M42
+
+# Read ports from .env (if it exists) so printed URLs match what's actually running.
+-include .env
+ROUTER_HTTP_PORT ?= 8000
+MAILPIT_UI_PORT ?= 8025
+EXO_HTTP_PORT ?= 80
 
 .DEFAULT_GOAL := help
 .PHONY: help init up up-full down logs seed demo test lint format check exo-addon backup clean
@@ -18,15 +25,15 @@ init: ## Create .env with random secrets (first time only)
 up: init ## Start the lead router, its database and the test inbox
 	$(COMPOSE) up -d --build --wait lead-router lead-worker mailpit
 	@echo ""
-	@echo "  Intake form   http://localhost:8000"
-	@echo "  Dashboard     http://localhost:8000/admin"
-	@echo "  API docs      http://localhost:8000/docs"
-	@echo "  Test inbox    http://localhost:8025"
+	@echo "  Intake form   http://localhost:$(ROUTER_HTTP_PORT)"
+	@echo "  Dashboard     http://localhost:$(ROUTER_HTTP_PORT)/admin"
+	@echo "  API docs      http://localhost:$(ROUTER_HTTP_PORT)/docs"
+	@echo "  Test inbox    http://localhost:$(MAILPIT_UI_PORT)"
 
 up-full: init ## Start everything, including the eXo Platform workspace (~10 GB RAM)
 	$(COMPOSE) --profile exo up -d --build
 	@echo ""
-	@echo "  eXo workspace http://exoapp.local  (first start takes several minutes;"
+	@echo "  eXo workspace http://exoapp.local:$(EXO_HTTP_PORT)  (first start takes several minutes;"
 	@echo "                add '127.0.0.1 exoapp.local' to your hosts file)"
 
 down: ## Stop everything (data is kept)
@@ -57,10 +64,14 @@ exo-addon: ## Build eXo + lead-capture add-on (see infra/exo/README.md for versi
 	docker build --build-arg EXO_IMAGE=$(EXO_BASE_IMAGE) --build-arg LEADCAPTURE_REF=$(LEADCAPTURE_REF) \
 		-t barrgo/exo-leadcapture:local infra/exo
 
-backup: ## Dump the router database to ./backups
+backup: ## Dump the router database to ./backups (fails loudly if the dump fails)
 	@mkdir -p backups
-	$(COMPOSE) exec -T router-db pg_dump -U router router | gzip > backups/router-$$(date +%Y%m%d-%H%M%S).sql.gz
-	@ls -1t backups | head -1
+	@f=backups/router-$$(date +%Y%m%d-%H%M%S).sql; \
+	if $(COMPOSE) exec -T router-db pg_dump -U router --clean --if-exists router > $$f.tmp; then \
+		mv $$f.tmp $$f && gzip $$f && echo "Backup written: $$f.gz"; \
+	else \
+		rm -f $$f.tmp; echo "Backup FAILED: pg_dump did not complete" >&2; exit 1; \
+	fi
 
 clean: ## Stop everything AND delete all data volumes (asks first)
 	@read -p "This deletes all leads and eXo data. Type 'yes' to continue: " ok && [ "$$ok" = yes ]

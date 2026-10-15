@@ -19,7 +19,10 @@ change. A worker (`app/worker.py`) delivers due messages every 2 seconds:
 - success → `sent_at` set;
 - failure → `attempts+1`, `next_attempt_at = now + min(5 min, 5s × 2^attempts)`;
 - after `ROUTER_OUTBOX_MAX_ATTEMPTS` → `failed=true`, counted on the dashboard;
-- unknown message kinds fail loudly instead of being dropped.
+- unknown message kinds fail loudly instead of being dropped;
+- each cycle stops starting new sends after `ROUTER_OUTBOX_TIME_BUDGET_SECONDS` (default 5 s),
+  and SMTP/eXo calls have short timeouts, so a hung server can't delay offer expiry, which
+  the same worker loop handles.
 
 ## Consequences
 

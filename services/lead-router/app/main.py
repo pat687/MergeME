@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from app import __version__, worker
 from app.api import admin, offers, pages, public
 from app.api.pages import STATIC
+from app.api.ratelimit import SlidingWindowLimiter
 from app.config import Settings, get_settings
 from app.db import Base, make_engine, make_session_factory
 from app.services.outbox import Handler
@@ -70,6 +71,7 @@ def create_app(
     app.state.settings = settings
     app.state.session_factory = session_factory
     app.state.handlers = handlers
+    app.state.intake_limiter = SlidingWindowLimiter(settings.intake_rate_limit_per_minute)
 
     for module in (public, offers, admin, pages):
         app.include_router(module.router)

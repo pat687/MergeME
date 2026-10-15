@@ -22,7 +22,7 @@ class SmtpMailer:
         msg["To"] = payload["to"]
         msg["Subject"] = payload["subject"]
         msg.set_content(payload["body"])
-        with smtplib.SMTP(self.s.smtp_host, self.s.smtp_port, timeout=10) as smtp:
+        with smtplib.SMTP(self.s.smtp_host, self.s.smtp_port, timeout=5) as smtp:
             if self.s.smtp_starttls:
                 smtp.starttls()
             if self.s.smtp_username:

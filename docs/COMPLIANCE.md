@@ -31,10 +31,10 @@ The software is built around that model:
 | Every charge is whole, non-negative cents | Single gate `assert_flat_fee` on every ledger insert | [`domain/compliance.py`](../services/lead-router/app/domain/compliance.py) | `test_ledger_gate_refuses_anything_but_flat_non_negative_cents` |
 | Percentage pricing can't sneak in through the API | Attorney schemas use `extra="forbid"`: a `fee_percent` field is rejected with 422 | [`schemas.py`](../services/lead-router/app/schemas.py) `AttorneyBase` | `test_percentage_pricing_cannot_even_be_submitted` |
 | **Price doesn't depend on case outcome** | Charges happen at delivery (accept, or exclusive assignment). There is no endpoint to report retention, settlement or recovery. | [`services/billing.py`](../services/lead-router/app/services/billing.py) | `test_ping_tree_walks_down_the_line...` (charge on accept) |
-| **No recommending.** Don't imply we chose the "best" lawyer | Consumer text says attorneys *pay*, that we *do not recommend* any attorney, and that we *have not evaluated* the matter. | `compliance.disclosure()` | `test_consumer_wording_never_claims_to_recommend` |
+| **No recommending.** Don't imply we chose the "best" lawyer | Consumer text says attorneys *pay*, that we *do not recommend* any attorney, and that we *have not evaluated* the matter. | `compliance.disclosure()`, `consumer_message()`, `consent_text()` | `test_no_consumer_facing_text_claims_a_recommendation` |
 | Don't imply the referral is free to the lawyer | Disclosure states attorneys pay a flat fee | `compliance.disclosure()` | same |
-| Don't imply we analyzed their legal problem | The score is internal (pricing/ordering) and never shown to consumers. Routing uses the practice area the consumer chose plus objective facts (ZIP, license, capacity). | [`domain/scoring.py`](../services/lead-router/app/domain/scoring.py) docstring | n/a (by construction) |
-| Not a law firm / no attorney-client relationship | Disclosure on the form, in the API response and in the receipt email | `compliance.disclosure()`, `emails.consumer_receipt` | `test_consumer_wording...` |
+| Don't imply we analyzed their legal problem | The score is an internal quality grade shown only to attorneys and staff; it never rejects a lead and is never shown to consumers. Routing uses the practice area the consumer chose plus objective facts (ZIP, license, capacity). | [`domain/scoring.py`](../services/lead-router/app/domain/scoring.py) docstring | n/a (by construction) |
+| Not a law firm / no attorney-client relationship | Disclosure on the form, in the API response and in the receipt email | `compliance.disclosure()`, `emails.consumer_receipt` | `test_consumer_wording_never_claims_to_recommend` |
 | "Attorney advertising" label | Header tag and first words of the disclosure | [`static/intake.html`](../services/lead-router/app/static/intake.html) | n/a |
 | Attorney independence (Rule 5.4) | Attorneys decide to accept or pass on every lead; flags like "time-sensitive" are notes, never auto-rejections | `scoring._flags`, `offers.accept/decline` | `test_old_incident_gets_deadline_flag_but_is_not_rejected` |
 
@@ -45,9 +45,9 @@ Attorneys will call and text consumers, so consent evidence matters.
 | Control | Detail |
 |---|---|
 | Explicit opt-in | Unchecked checkbox. The server rejects any lead without `consent=true` (`scrubbing.scrub`). |
-| Exact wording stored | `leads.consent_text` stores the full sentence the person agreed to, plus `consent_version`. |
-| When and from where | `consent_at`, `ip_address`, `user_agent` are stored on the lead. |
-| Bounded sharing | The consent names the maximum number of attorneys (`ROUTER_SHARED_MAX_ATTORNEYS`), and the router never offers to more at once. Every attorney who received the lead is in its audit trail. |
+| Exact wording stored | `leads.consent_text` stores the full sentence the person agreed to, plus `consent_version`. A submission whose version doesn't match the wording currently shown is rejected ("please reload"), so the two always agree. |
+| When and from where | `consent_at`, `ip_address`, `user_agent` are stored on the lead. The IP comes from the connection itself; `X-Forwarded-For` is honored only from configured proxies (`ROUTER_TRUSTED_PROXY_IPS`), so a submitter can't choose it. |
+| Bounded sharing | The consent names the maximum number of attorneys (`ROUTER_SHARED_MAX_ATTORNEYS`). Every model respects it: shared offers go to at most that many, and the ping-tree line-up is cut at that many. Every attorney who received the lead is in its audit trail. |
 | Not a condition of purchase | Included in the consent text. |
 
 Notes for counsel:
@@ -63,8 +63,8 @@ Notes for counsel:
 
 | Concern | Control |
 |---|---|
-| Prospective-client information (Rule 1.18) | Offer previews and offer emails contain no name, phone or email, only practice area, ZIP, tier and a description summary. Attorneys who pass never learn who the person is. |
-| Minimum necessary | The intake form asks people not to include passwords or account numbers. |
+| Prospective-client information (Rule 1.18) | Offer previews and offer emails withhold the name, phone and email fields, and the free-text description is redacted first: the person's own name, phone numbers, email addresses and street addresses become `[redacted]`. Redaction is pattern-based and best-effort (an unusual way of writing a name could get through), so the form also tells people not to put contact details in the description. |
+| Minimum necessary | The intake form asks people to leave contact details, addresses and account numbers out of the description. |
 | Access control | Admin endpoints require `X-Admin-Key`; attorneys only see offers through signed links. |
 | Data location | Everything runs on your own infrastructure (Postgres volume, eXo volumes). No third-party SaaS. |
 | Selling personal information (e.g. CCPA/CPRA in California) | Selling leads may count as "selling" personal information. Add the required notice and opt-out if you serve those states. *Not implemented; see the launch checklist.* |
@@ -96,6 +96,7 @@ All consumer-facing compliance text lives in one file,
 [`domain/compliance.py`](../services/lead-router/app/domain/compliance.py). To change it:
 
 1. Edit the text and bump `ROUTER_DISCLOSURE_VERSION`.
-2. Run `make test`. `test_consumer_wording_never_claims_to_recommend` guards against
-   phrases like "best", "top-rated" or "evaluated your case".
+2. Run `make test`. `test_no_consumer_facing_text_claims_a_recommendation` checks the
+   disclosure, the consent text, every post-submission message and the receipt email
+   for phrases like "best", "top-rated", "matched you" or "evaluated your case".
 3. Archive the old wording. Existing leads keep the exact text they agreed to.

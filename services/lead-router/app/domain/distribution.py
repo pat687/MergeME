@@ -6,8 +6,11 @@ Three ways, like three ways of giving out a job:
                automatically, nobody else is asked.
 * Shared     - Up to N attorneys are asked at the same time. The first one to
                claim it wins ("speed to lead").
-* Ping tree  - Attorneys are lined up by how much they bid. The top bidder is
-               asked first; if they pass or time runs out, the next one is asked.
+* Ping tree  - Up to N attorneys are lined up by how much they bid. The top bidder
+               is asked first; if they pass or time runs out, the next one is asked.
+
+N is the number of attorneys the consumer agreed to in the consent text, so no
+model ever shares an inquiry with more attorneys than that.
 
 This module only *plans*. It returns a list of offers to create and never
 writes to the database, which keeps the business rules readable and testable.
@@ -54,7 +57,7 @@ def plan_distribution(
     territory_owner: Candidate | None,
     candidates: list[Candidate],
     policy_model: DistributionModel,
-    shared_max: int,
+    max_recipients: int,
     floor_cents: int,
 ) -> DistributionPlan:
     where = {"practice_area": practice_area, "zip_code": zip_code, "state": state}
@@ -84,21 +87,21 @@ def plan_distribution(
             eligible.append(c)
 
     if policy_model == DistributionModel.PING_TREE:
-        return _ping_tree(eligible, practice_area, floor_cents, skipped)
-    return _shared(eligible, practice_area, shared_max, skipped)
+        return _ping_tree(eligible, practice_area, floor_cents, max_recipients, skipped)
+    return _shared(eligible, practice_area, max_recipients, skipped)
 
 
 def _shared(
-    eligible: list[Candidate], practice_area: str, shared_max: int, skipped: dict[int, str]
+    eligible: list[Candidate], practice_area: str, max_recipients: int, skipped: dict[int, str]
 ) -> DistributionPlan:
     # Fairness first: attorneys with fewer leads today go to the front,
     # then higher bids, then attorney id so the order is always repeatable.
     ranked = sorted(
         eligible, key=lambda c: (c.accepted_today, -c.bid_for(practice_area), c.attorney_id)
     )
-    chosen, overflow = ranked[:shared_max], ranked[shared_max:]
+    chosen, overflow = ranked[:max_recipients], ranked[max_recipients:]
     for c in overflow:
-        skipped[c.attorney_id] = f"shared pool already full ({shared_max} attorneys)"
+        skipped[c.attorney_id] = f"shared pool already full ({max_recipients} attorneys)"
     offers = [
         OfferSpec(c.attorney_id, 1, _price(c, practice_area), OfferStatus.PENDING) for c in chosen
     ]
@@ -108,7 +111,11 @@ def _shared(
 
 
 def _ping_tree(
-    eligible: list[Candidate], practice_area: str, floor_cents: int, skipped: dict[int, str]
+    eligible: list[Candidate],
+    practice_area: str,
+    floor_cents: int,
+    max_recipients: int,
+    skipped: dict[int, str],
 ) -> DistributionPlan:
     bidders: list[Candidate] = []
     for c in eligible:
@@ -121,6 +128,9 @@ def _ping_tree(
     ranked = sorted(
         bidders, key=lambda c: (-c.bid_for(practice_area), c.accepted_today, c.attorney_id)
     )
+    ranked, overflow = ranked[:max_recipients], ranked[max_recipients:]
+    for c in overflow:
+        skipped[c.attorney_id] = f"line-up already full ({max_recipients} attorneys)"
     offers = [
         OfferSpec(
             c.attorney_id,

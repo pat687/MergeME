@@ -79,7 +79,9 @@ def run_monthly_billing(db: Session, period: str, now: datetime) -> tuple[int, i
         else:
             skipped += 1
 
-    for t in db.scalars(select(Territory)).all():
+    # Inactive owners don't receive their territory's leads, so they aren't charged rent.
+    active_territories = select(Territory).join(Attorney).where(Attorney.active)
+    for t in db.scalars(active_territories).all():
         ok = _add(
             db,
             attorney_id=t.attorney_id,

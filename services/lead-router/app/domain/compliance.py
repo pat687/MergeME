@@ -15,11 +15,56 @@ reviewed place, not scattered around the code.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
+
 from app.domain.types import ChargeKind
+
+REDACTED = "[redacted]"
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[\s.-]*)?\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}(?!\d)")
+# "12 Elm St", "4500 N Lake Shore Drive". Capitalized words only, so everyday phrases
+# like "3 blocks down the road" are left alone.
+_STREET_RE = re.compile(
+    r"\b\d{1,6}\s+(?:[A-Z0-9][\w.'-]*\s+){0,4}"
+    r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Way|Place|Pl"
+    r"|Terrace|Ter|Parkway|Pkwy|Highway|Hwy|Circle|Cir)\b\.?"
+)
 
 
 class ComplianceError(ValueError):
     """Raised when code tries to record money in a way the rules don't allow."""
+
+
+def redact(
+    text: str,
+    *,
+    names: Iterable[str] = (),
+    email: str | None = None,
+    phone: str | None = None,
+) -> str:
+    """Best-effort removal of contact details from free text shown before an attorney accepts.
+
+    Removes email addresses, US phone numbers, street addresses and the person's
+    own name (when written with a capital letter, so a first name like "Will"
+    doesn't erase the word "will").
+    """
+    out = text
+    if email:
+        out = re.sub(re.escape(email), REDACTED, out, flags=re.IGNORECASE)
+    out = _EMAIL_RE.sub(REDACTED, out)
+    out = _PHONE_RE.sub(REDACTED, out)
+    if phone and len(phone) == 10:
+        out = re.sub(rf"(?<!\d){phone[3:6]}[\s.-]*{phone[6:]}(?!\d)", REDACTED, out)
+    out = _STREET_RE.sub(REDACTED, out)
+    for name in names:
+        for token in name.split():
+            token = token.strip(".-'\u2019")
+            if len(token) < 2:
+                continue
+            for form in {token.capitalize(), token.upper(), token[:1].upper() + token[1:]}:
+                out = re.sub(rf"(?<!\w){re.escape(form)}(?!\w)", REDACTED, out)
+    return out
 
 
 def disclosure(platform_name: str) -> str:

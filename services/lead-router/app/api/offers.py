@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_settings
@@ -26,11 +26,12 @@ def _run(fn, *args):
 )
 def view_offer(
     offer_id: str,
-    t: str = Query(description="Signed token from the offer link"),
+    x_offer_token: str = Header(description="Signed token from the offer link (after '#t=')"),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> OfferView:
-    return _run(offers.view, db, settings, offer_id, t, utcnow())
+    # A header, not a query string, so the token never lands in access logs.
+    return _run(offers.view, db, settings, offer_id, x_offer_token, utcnow())
 
 
 @router.post("/{offer_id}/accept", response_model=OfferView, summary="Claim the lead")

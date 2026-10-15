@@ -45,7 +45,11 @@ def run_cycle(
     with session_factory() as db:
         expired = offers.expire_due(db, settings, now)
     delivered = outbox.deliver_due(
-        session_factory, handlers, now=now, max_attempts=settings.outbox_max_attempts
+        session_factory,
+        handlers,
+        now=now,
+        max_attempts=settings.outbox_max_attempts,
+        time_budget_seconds=settings.outbox_time_budget_seconds,
     )
     if expired or delivered:
         log.info("worker cycle: expired=%s delivered=%s", expired, delivered)
