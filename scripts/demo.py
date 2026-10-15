@@ -181,7 +181,9 @@ def main() -> None:
         if st["total_cents"] or st["entries"]:
             kinds = ", ".join(sorted({e["kind"] for e in st["entries"]}))
             print(f"  {name:<13} ${st['total_cents'] / 100:>9.2f}   ({kinds})")
-    check(totals.get("Jordan Reyes") == 7100, "Jordan is billed the $71 market price, not the $80 bid")
+    jamie_charge = next(o["price_cents"] for o in lead(jamie["lead_id"])["offers"] if o["status"] == "accepted")
+    check(jamie_charge == 7100 and totals.get("Jordan Reyes", 0) >= 7100,
+          "Jordan is billed the $71 market price for Jamie's lead, not the $80 bid")
 
     step(7, "The dashboard numbers", "The same numbers appear at /admin.")
     s = call("GET", "/api/v1/admin/stats", admin=True)[1]

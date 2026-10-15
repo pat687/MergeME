@@ -143,6 +143,11 @@ docker compose start exo
    added since the first release are added at startup (`ADDED_COLUMNS` in `app/db.py`). Add
    Alembic before the first production schema change that isn't a new nullable column (see
    ARCHITECTURE.md §11).
+5. After upgrading to the release with attorney bid pages: every practice area now has a
+   lowest price (`ROUTER_FLOOR_PRICE_CENTS`, $15 by default outside the auctioned areas),
+   including set-price areas. Attorneys paying per lead whose price is below it stop getting
+   leads in that area. Open the dashboard's Market panel: anyone affected is marked
+   "below lowest bid", and you can re-price them with `PATCH /api/v1/admin/attorneys/{id}`.
 
 ## Going to production
 

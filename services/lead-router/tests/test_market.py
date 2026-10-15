@@ -6,6 +6,8 @@ Demo network (app/seed.py): personal injury bids are Avery $95, Jordan $80, Sam 
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from pydantic import ValidationError
 
@@ -95,6 +97,40 @@ def test_shared_prices_below_the_minimum_are_left_out():
         (3, 0, PriceBasis.SUBSCRIPTION),
     ]
     assert plan.skipped[1] == "price below the $15.00 minimum"
+
+
+def test_a_subscribers_stored_number_never_wins_a_shared_place():
+    payer_a, payer_b = lawyer(1, 4000), lawyer(2, 3500)
+    subscriber = lawyer(3, 500_000, plan="subscription")
+    plan = auction([payer_a, payer_b, subscriber], floor=1500, model=DistributionModel.SHARED)
+    assert [o.attorney_id for o in plan.offers] == [1, 2, 3]  # room for all three
+    plan = plan_distribution(
+        **WHERE,
+        territory_owner=None,
+        candidates=[payer_a, payer_b, subscriber],
+        policy_model=DistributionModel.SHARED,
+        max_recipients=2,
+        floor_cents=1500,
+    )
+    assert [o.attorney_id for o in plan.offers] == [1, 2]
+    assert "pool already full" in plan.skipped[3]
+
+    # Fairness still comes first: a subscriber with fewer leads today goes ahead.
+    busy = [replace(payer_a, accepted_today=1), replace(payer_b, accepted_today=1)]
+    plan = plan_distribution(
+        **WHERE,
+        territory_owner=None,
+        candidates=[*busy, subscriber],
+        policy_model=DistributionModel.SHARED,
+        max_recipients=2,
+        floor_cents=1500,
+    )
+    assert [o.attorney_id for o in plan.offers] == [3, 1]
+
+
+def test_a_floor_above_the_highest_bid_is_refused_at_startup():
+    with pytest.raises(ValidationError, match="nobody could bid there"):
+        Settings(_env_file=None, max_bid_cents=7000)  # med-mal's floor is $75
 
 
 @pytest.mark.parametrize(
@@ -318,6 +354,63 @@ def test_a_deactivated_attorney_link_stops_working(client):
     assert (
         client.post(f"/api/v1/admin/attorneys/{casey}/bid-link", headers=ADMIN).status_code == 409
     )
+    # Reactivating doesn't bring an old (possibly leaked) link back; a new one is needed.
+    client.patch(f"/api/v1/admin/attorneys/{casey}", json={"active": True}, headers=ADMIN)
+    assert client.get(f"/api/v1/bids/{casey}", headers=bids_headers(casey)).status_code == 404
+    fresh = client.post(f"/api/v1/admin/attorneys/{casey}/bid-link", headers=ADMIN).json()["link"]
+    again = {"X-Attorney-Token": fresh.split("#t=")[1]}
+    assert client.get(f"/api/v1/bids/{casey}", headers=again).status_code == 200
+
+
+def test_bid_saves_are_limited_per_day_and_recorded(client, settings):
+    settings.max_bid_saves_per_day = 2
+    jordan = attorney_id(client, "Jordan Reyes")
+
+    def save(cents):
+        return client.put(
+            f"/api/v1/bids/{jordan}",
+            json={"bids_cents": {"personal_injury": cents}},
+            headers=bids_headers(jordan),
+        )
+
+    assert save(8500).status_code == 200
+    assert save(8500).status_code == 200  # nothing changed: doesn't use up a save
+    assert save(8600).status_code == 200
+    refused = save(9900)
+    assert refused.status_code == 429 and "2 times a day" in refused.json()["detail"]
+    assert board(client, jordan)["personal_injury"]["my_bid_cents"] == 8600
+
+    changes = client.get(
+        "/api/v1/admin/bid-changes", params={"attorney_id": jordan}, headers=ADMIN
+    ).json()
+    assert [c["changes"] for c in changes] == [
+        {"personal_injury": [8500, 8600]},
+        {"personal_injury": [8000, 8500]},
+    ]
+
+
+def test_average_price_appears_only_after_five_sales_and_is_rounded(client):
+    sam = attorney_id(client, "Sam Okafor")
+    averages = []
+    for n in range(5):
+        created = client.post(
+            "/api/v1/intake",
+            json=inquiry_data(email=f"buyer{n}@example.org", phone=f"(312) 555-01{n}0"),
+        ).json()
+        detail = client.get(f"/api/v1/admin/leads/{created['lead_id']}", headers=ADMIN).json()
+        first = next(o for o in detail["offers"] if o["round"] == 1)  # Avery, $81
+        accepted = client.post(
+            f"/api/v1/offers/{first['id']}/accept", json={"token": token(first["id"])}
+        )
+        assert accepted.status_code == 200, accepted.text
+        pi = board(client, sam)["personal_injury"]
+        averages.append((pi["sold_last_30_days"], pi["average_price_cents"]))
+    # One sale would show its exact price (and so Jordan's bid + $1); five, rounded, don't.
+    assert averages == [(1, None), (2, None), (3, None), (4, None), (5, 8000)]
+    market = {
+        m["practice_area"]: m for m in client.get("/api/v1/admin/market", headers=ADMIN).json()
+    }
+    assert market["personal_injury"]["average_price_cents"] == 8100  # staff see the exact figure
 
 
 # --- Admin --------------------------------------------------------------------
@@ -334,6 +427,37 @@ def test_admin_emails_a_new_bid_link_that_replaces_the_old_one(client, mailbox):
     assert client.get(f"/api/v1/bids/{jordan}", headers=new).status_code == 200
     old = bids_headers(jordan, version=0)
     assert client.get(f"/api/v1/bids/{jordan}", headers=old).status_code == 404
+
+
+def test_staff_cannot_set_a_pay_per_lead_price_below_the_floor(client, settings):
+    new = {
+        "name": "Low Price",
+        "firm": "Example Firm (Demo)",
+        "email": "low.price@example.com",
+        "bar_states": ["IL"],
+        "service_zips": ["606"],
+        "bids_cents": {"bankruptcy": 1000},
+    }
+    r = client.post("/api/v1/admin/attorneys", json=new, headers=ADMIN)
+    assert r.status_code == 422 and "Bankruptcy: the lowest price accepted is $15.00" in r.text
+    # A subscriber's number isn't a price, so it may be anything.
+    subscriber = {**new, "plan": "subscription", "monthly_fee_cents": 50000}
+    assert client.post("/api/v1/admin/attorneys", json=subscriber, headers=ADMIN).status_code == 201
+
+    casey = attorney_id(client, "Casey Patel")
+    r = client.patch(
+        f"/api/v1/admin/attorneys/{casey}",
+        json={"bids_cents": {"bankruptcy": 1000}},
+        headers=ADMIN,
+    )
+    assert r.status_code == 422
+
+    # A price left below a floor raised later is flagged for staff.
+    settings.floor_price_cents = {**settings.floor_price_cents, "workers_comp": 7000}
+    market = {
+        m["practice_area"]: m for m in client.get("/api/v1/admin/market", headers=ADMIN).json()
+    }
+    assert [b["below_floor"] for b in market["workers_comp"]["bidders"]] == [True]
 
 
 def test_admin_sees_the_whole_market(client):
@@ -366,6 +490,17 @@ def test_the_price_note_describes_the_rule_used_when_the_offer_was_priced(client
     )
     assert view.status_code == 200, view.text
     assert view.json()["price_note"].startswith("Market price: $1.00 more")
+
+
+def test_subscribers_are_not_told_to_change_bids(client, mailbox):
+    morgan = attorney_id(client, "Morgan Lee")  # subscription plan
+    client.post(f"/api/v1/admin/attorneys/{morgan}/bid-link", headers=ADMIN)
+    client.post("/api/v1/intake", json=inquiry_data(practice_area="family_law"))
+    client.post("/api/v1/admin/worker/run", headers=ADMIN)
+    to_morgan = {m["subject"]: m["body"] for m in mailbox if m["to"] == "morgan.lee@example.com"}
+    assert "Manage your lead bids" in to_morgan and len(to_morgan) == 2  # bid link + offer
+    assert all("change your bids" not in body for body in to_morgan.values())
+    assert "you don't\nbid" in to_morgan["Manage your lead bids"]
 
 
 def test_shared_offers_say_the_price_is_the_attorneys_own(client):

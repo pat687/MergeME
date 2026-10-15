@@ -6,7 +6,7 @@ from typing import Any
 
 from app.config import Settings
 from app.domain import compliance
-from app.domain.types import PracticeArea
+from app.domain.types import BillingPlan, PracticeArea
 from app.models import Attorney, Lead, Offer
 
 
@@ -21,6 +21,12 @@ def offer_email(
     expires = offer.expires_at.strftime("%H:%M UTC") if offer.expires_at else "no deadline"
     flags = "\n".join(f"  - {f}" for f in lead.flags) or "  (none)"
     how_priced = f"\n                {offer.price_note}" if offer.price_note else ""
+    bids_line = (
+        ""
+        if attorney.plan == BillingPlan.SUBSCRIPTION
+        else "\nTo see where you rank or change your bids, use the private bid link we sent\n"
+        "you, or ask us for a new one.\n"
+    )
     body = f"""Hello {attorney.name},
 
 A new {area} inquiry is available in {lead.zip_code}, {lead.state}.
@@ -37,10 +43,7 @@ Notes:
 
 Accept or decline here:
   {link}
-
-To see where you rank or change your bids, use the private bid link we sent
-you, or ask us for a new one.
-
+{bids_line}
 You decide whether to take on any matter. {settings.platform_name} does not
 evaluate cases or recommend attorneys to consumers.
 """
@@ -92,19 +95,28 @@ Reference number: {lead.id[:8].upper()}
 
 
 def bids_email(settings: Settings, attorney: Attorney, link: str) -> dict[str, Any]:
-    body = f"""Hello {attorney.name},
-
-Here is your private link to manage your lead bids with {settings.platform_name}:
-
-  {link}
-
-On that page you can see, for each practice area, your place in line, a bid
+    if attorney.plan == BillingPlan.SUBSCRIPTION:
+        what = """On that page you can see your practice areas and what leads have sold for in
+the last 30 days. Your leads are included in your subscription, so you don't
+bid; contact us to change your practice areas."""
+        keep = "Keep this link private."
+    else:
+        what = """On that page you can see, for each practice area, your place in line, a bid
 that would put you first, and what leads have sold for in the last 30 days,
 and change your bids. Changes apply to the next lead.
 
 You only pay for leads you accept, and the price never depends on whether you
-are hired. Keep this link private: anyone with it can change your bids. This
-link replaces any earlier one; ask us for a new link at any time and this one
-stops working.
+are hired."""
+        keep = "Keep this link private: anyone with it can change your bids."
+    body = f"""Hello {attorney.name},
+
+Here is your private link to your lead bids page with {settings.platform_name}:
+
+  {link}
+
+{what}
+
+{keep} This link replaces any earlier one; ask us for a new link at any time
+and this one stops working.
 """
     return {"to": attorney.email, "subject": "Manage your lead bids", "body": body}

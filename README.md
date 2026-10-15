@@ -234,13 +234,14 @@ accepts, not just when the offer goes out.
 **Attorneys set their own bids.** Each attorney gets a private, signed link to a bid page
 (`/bids/{id}`; staff send it from the dashboard's Market panel or
 `POST /api/v1/admin/attorneys/{id}/bid-link`). For every practice area it shows their place
-in line, a bid that would put them first (rounded up to a whole $10, so nobody sees a rival's
-exact bid), the lowest bid accepted and what leads sold for in the last 30 days, and lets them
-change their bids. Every practice area has a lowest bid (`ROUTER_FLOOR_PRICE_CENTS`), in
-set-price areas too, so no attorney paying per lead can set a $0 price. Sending a new link
-turns off the old one, and links stop working when an attorney is deactivated. Subscribers
-see the page but can't bid: a bid would cost them nothing, so in auctions they're asked
-after every paying bidder and never set anyone's price. Auction rules
+in line, a bid that would put them first (rounded up to a whole $10), the lowest bid accepted
+and what leads sold for in the last 30 days (the average rounded to $10, once 5 have sold),
+and lets them change their bids a limited number of times a day. Other attorneys' bids are
+never shown, and every save is recorded. Every practice area has a lowest bid
+(`ROUTER_FLOOR_PRICE_CENTS`), in set-price areas too, so no attorney paying per lead can set
+a $0 price. Sending a new link turns off the old one, and deactivating an attorney turns off
+their links for good. Subscribers see the page but can't bid: a bid would cost them nothing,
+so they're asked after paying attorneys and never set anyone's price. Auction rules
 (`ROUTER_AUCTION_PRICING`, `ROUTER_BID_INCREMENT_CENTS`) are configurable.
 
 All of it is configurable in `.env` (`ROUTER_DISTRIBUTION_POLICY`,

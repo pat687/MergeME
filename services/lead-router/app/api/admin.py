@@ -14,13 +14,14 @@ from app.api.deps import get_db, get_settings, require_admin
 from app.config import Settings
 from app.db import utcnow
 from app.domain.matching import covers_zip
-from app.domain.types import DistributionModel, LeadStatus, OfferStatus
-from app.models import Attorney, Lead, LedgerEntry, Offer, OutboxMessage, Territory
+from app.domain.types import BillingPlan, DistributionModel, LeadStatus, OfferStatus, PracticeArea
+from app.models import Attorney, BidChange, Lead, LedgerEntry, Offer, OutboxMessage, Territory
 from app.schemas import (
     AttorneyCreate,
     AttorneyOut,
     AttorneyUpdate,
     AuditOut,
+    BidChangeOut,
     BidLinkOut,
     BillingRunResult,
     LeadDetail,
@@ -149,9 +150,29 @@ def list_attorneys(db: Session = Depends(get_db)) -> list[Attorney]:
     return list(db.scalars(select(Attorney).order_by(Attorney.id)).all())
 
 
+def _check_floors(settings: Settings, plan: str, bids: dict[str, int]) -> None:
+    """The same lowest price the bid page enforces. A pay-per-lead price below it would
+    never get a lead (the line-ups skip it), so refuse it here instead of failing quietly.
+    Subscribers' numbers aren't prices, so they're exempt."""
+    if plan == BillingPlan.SUBSCRIPTION:
+        return
+    low = [
+        f"{PracticeArea(area).label}: the lowest price accepted is "
+        f"${settings.floor_for(area) / 100:,.2f}"
+        for area, cents in bids.items()
+        if cents < settings.floor_for(area)
+    ]
+    if low:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "; ".join(low))
+
+
 @router.post("/attorneys", response_model=AttorneyOut, status_code=status.HTTP_201_CREATED)
-def create_attorney(body: AttorneyCreate, db: Session = Depends(get_db)) -> Attorney:
-    attorney = Attorney(**body.model_dump(mode="json"), created_at=utcnow())
+def create_attorney(
+    body: AttorneyCreate, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
+) -> Attorney:
+    data = body.model_dump(mode="json")
+    _check_floors(settings, data["plan"], data["bids_cents"])
+    attorney = Attorney(**data, created_at=utcnow())
     db.add(attorney)
     db.commit()
     return attorney
@@ -159,10 +180,20 @@ def create_attorney(body: AttorneyCreate, db: Session = Depends(get_db)) -> Atto
 
 @router.patch("/attorneys/{attorney_id}", response_model=AttorneyOut)
 def update_attorney(
-    attorney_id: int, body: AttorneyUpdate, db: Session = Depends(get_db)
+    attorney_id: int,
+    body: AttorneyUpdate,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> Attorney:
     attorney = _get_or_404(db, Attorney, attorney_id)
-    for field, value in body.model_dump(mode="json", exclude_unset=True).items():
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if "bids_cents" in changes:
+        _check_floors(settings, attorney.plan, changes["bids_cents"])
+    if changes.get("active") is False and attorney.active:
+        # Deactivating cuts off every bid link for good: reactivating won't revive one
+        # that leaked. Send a new link after reactivating.
+        attorney.bids_link_version += 1
+    for field, value in changes.items():
         setattr(attorney, field, value)
     db.commit()
     return attorney
@@ -191,6 +222,22 @@ def send_bid_link(
     outbox.enqueue(db, "email", emails.bids_email(settings, attorney, link))
     db.commit()
     return BidLinkOut(sent_to=attorney.email, link=link if settings.demo_mode else None)
+
+
+@router.get(
+    "/bid-changes",
+    response_model=list[BidChangeOut],
+    summary="Recent saves on attorneys' bid pages, newest first",
+)
+def bid_changes(
+    attorney_id: int | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+) -> list[BidChange]:
+    query = select(BidChange).order_by(BidChange.at.desc(), BidChange.id.desc()).limit(limit)
+    if attorney_id is not None:
+        query = query.where(BidChange.attorney_id == attorney_id)
+    return list(db.scalars(query).all())
 
 
 @router.get("/market", response_model=list[MarketArea], summary="Bids and recent prices per area")

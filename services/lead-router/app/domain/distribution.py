@@ -120,10 +120,17 @@ def _shared(
             skipped[c.attorney_id] = f"price below the ${floor_cents / 100:.2f} minimum"
         else:
             priced.append(c)
-    # Fairness first: attorneys with fewer leads today go to the front,
-    # then higher bids, then attorney id so the order is always repeatable.
+    # Fairness first: attorneys with fewer leads today go to the front, then attorneys
+    # paying per lead (higher price first), then subscribers, whose stored bid costs them
+    # nothing and so never decides who gets a place; attorney id keeps it repeatable.
     ranked = sorted(
-        priced, key=lambda c: (c.accepted_today, -c.bid_for(practice_area), c.attorney_id)
+        priced,
+        key=lambda c: (
+            c.accepted_today,
+            _subscriber(c),
+            0 if _subscriber(c) else -c.bid_for(practice_area),
+            c.attorney_id,
+        ),
     )
     chosen, overflow = ranked[:max_recipients], ranked[max_recipients:]
     for c in overflow:

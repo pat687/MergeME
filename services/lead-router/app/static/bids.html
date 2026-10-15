@@ -78,7 +78,8 @@
         d.can_edit ? h("div", { class: "actions" }, h("button", { type: "submit", id: "save" }, "Save bids")) : null),
       h("p", { class: "small muted" }, d.can_edit
         ? "Leave a bid empty to stop receiving leads in that area. Changes apply to the next lead. " +
-          "\"Bid to be first\" is rounded up to a whole $10, so other attorneys' bids stay private."
+          "\"Bid to be first\" is rounded up to a whole $10, and averages are rounded to $10. " +
+          "You can save changes a limited number of times a day."
         : "Contact us to add or remove a practice area."));
   }
 

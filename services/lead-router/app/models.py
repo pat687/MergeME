@@ -4,6 +4,7 @@ attorneys ──< territories            (an attorney can rent exclusive ZIPs)
 attorneys ──< offers >── leads        (a lead is offered to one or more attorneys)
 leads ──< audit_events                (every decision, written down)
 attorneys ──< ledger_entries          (what each attorney owes, flat fees only)
+attorneys ──< bid_changes             (every save on an attorney's own bid page)
 outbox_messages                       (emails and eXo updates waiting to be sent)
 """
 
@@ -57,6 +58,18 @@ class Attorney(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     territories: Mapped[list[Territory]] = relationship(back_populates="attorney")
+
+
+class BidChange(Base):
+    """Each save on an attorney's bid page: for the record, and for the daily save limit."""
+
+    __tablename__ = "bid_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    attorney_id: Mapped[int] = mapped_column(ForeignKey("attorneys.id"), index=True)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+    # {"personal_injury": [8000, 9900]}: before and after, in cents (null = not bidding).
+    changes: Mapped[dict[str, Any]] = mapped_column(JSONField)
 
 
 class Territory(Base):

@@ -248,11 +248,19 @@ Rules that keep the auction honest:
 * **Subscribers don't bid.** Their leads are included in a flat monthly fee, so a bid would
   cost them nothing. In auctions they're asked after every paying bidder and their bids
   never set anyone's price; the bid page is read-only for them.
-* **Rival bids stay private.** The bid page (`/bids/{id}`, `app/api/bids.py`) shows an
-  attorney's place in line and a bid that would put them first, rounded up to a whole $10
-  (`market.bid_board`), never another attorney's exact bid. That limits, but can't fully
-  remove, a rival's ability to bid just under the leader to raise the leader's price; the
-  leader still never pays more than their own bid.
+* **Other attorneys' bids aren't shown.** The bid page (`/bids/{id}`, `app/api/bids.py`)
+  shows an attorney's place in line, a bid that would put them first rounded up to a whole
+  $10, and a 30-day average price rounded to $10 once at least 5 leads sold
+  (`market.bid_board`). A place in line still answers "is my bid above theirs?", so someone
+  who keeps changing their own bid could home in on a rival's. Saves are therefore limited
+  (`ROUTER_MAX_BID_SAVES_PER_DAY`, default 10) and every save is recorded with before and
+  after amounts (`bid_changes`, `GET /api/v1/admin/bid-changes`), which makes probing slow
+  and visible. The leader never pays more than their own bid either way.
+* **Shared areas** ask attorneys with the fewest leads today first; among equals, attorneys
+  paying per lead (higher price first) go ahead of subscribers, whose stored number is
+  never used to rank them.
+* **Staff edits follow the same floor.** The admin API refuses a pay-per-lead price below
+  the floor, and the market panel flags any left below a floor that was raised later.
 
 Every bidder above the floor joins the line, but no more attorneys are *asked*
 (`activated_at` set) than the person agreed to. That number is stored on the lead with

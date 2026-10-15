@@ -479,7 +479,10 @@ class BidRow(BaseModel):
         "so other attorneys' bids stay private. Empty when you're already first."
     )
     sold_last_30_days: int
-    average_price_cents: int | None
+    average_price_cents: int | None = Field(
+        description="Rounded to $10, and only once at least 5 leads sold, so no single sale "
+        "price (and so no rival's bid) can be worked out from it"
+    )
     exclusive_territory: bool = Field(description="You rent an exclusive ZIP in this area")
 
 
@@ -508,11 +511,20 @@ class BidLinkOut(BaseModel):
     link: str | None = Field(default=None, description="Shown only in demo mode")
 
 
+class BidChangeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    attorney_id: int
+    at: datetime
+    changes: dict[str, list[int | None]] = Field(description="Practice area: [before, after]")
+
+
 class MarketBidder(BaseModel):
     attorney_id: int
     name: str
     bid_cents: int
     plan: BillingPlan
+    below_floor: bool = Field(description="Pays per lead but priced below the lowest bid: no leads")
 
 
 class MarketArea(BaseModel):

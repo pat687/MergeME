@@ -7,15 +7,17 @@ included in a flat fee, so their practice areas are set with staff.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_settings
 from app.config import Settings
 from app.db import utcnow
 from app.domain.types import BillingPlan
-from app.models import Attorney, Territory
+from app.models import Attorney, BidChange, Territory
 from app.schemas import BidsUpdate, BidsView
 from app.services import links, market
 
@@ -60,8 +62,8 @@ def pricing_rule(settings: Settings, plan: str) -> str:
     return (
         f"In auctioned practice areas the highest bidder is asked first; if you take the lead, "
         f"{auction}. In other areas your bid is your flat price per lead. You only pay for "
-        "leads you accept, and the price never depends on whether you're hired. Other "
-        "attorneys' bids are private: you see your place in line, not their amounts."
+        "leads you accept, and the price never depends on whether you're hired. We don't "
+        "show other attorneys' bids, only your place in line."
     )
 
 
@@ -112,11 +114,25 @@ def update_bids(
         .with_for_update()
         .execution_options(populate_existing=True)
     ).one()
+    now = utcnow()
+    saves = db.scalar(
+        select(func.count())
+        .select_from(BidChange)
+        .where(BidChange.attorney_id == attorney.id, BidChange.at > now - timedelta(days=1))
+    )
+    if saves >= settings.max_bid_saves_per_day:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"you can save bid changes {settings.max_bid_saves_per_day} times a day; "
+            "please try again tomorrow or contact us",
+        )
     owned = {
         t.practice_area
         for t in db.scalars(select(Territory).where(Territory.attorney_id == attorney.id))
     }
-    bids = dict(attorney.bids_cents)
+    before = dict(attorney.bids_cents)
+    bids = dict(before)
     problems = []
     for area, cents in body.bids_cents.items():
         name = area.label
@@ -141,6 +157,13 @@ def update_bids(
     if problems:
         db.rollback()
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "; ".join(problems))
-    attorney.bids_cents = bids
+    changed = {
+        area: [before.get(area), bids.get(area)]
+        for area in sorted(set(before) | set(bids))
+        if before.get(area) != bids.get(area)
+    }
+    if changed:  # a save that changes nothing doesn't use up one of the day's saves
+        attorney.bids_cents = bids
+        db.add(BidChange(attorney_id=attorney.id, at=now, changes=changed))
     db.commit()
     return _view(db, settings, attorney)

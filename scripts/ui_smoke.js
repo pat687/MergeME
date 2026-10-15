@@ -232,15 +232,24 @@ async function newFamilyLead() {
 
   // Bid page: an attorney sees where they rank, gets a clear reason when a bid is too
   // low, and moves to first place by raising it. Keyboard focus survives both saves.
-  const sam = (await adminGet("/api/v1/admin/attorneys")).find((a) => a.name === "Sam Okafor");
-  const bidLink = (await (await fetch(`${BASE}/api/v1/admin/attorneys/${sam.id}/bid-link`,
+  // A throwaway attorney bidding $70 like Sam, so the demo attorneys' bids (and their daily
+  // limit on bid saves) are left alone; it's deactivated again at the end.
+  const bidder = await (await fetch(`${BASE}/api/v1/admin/attorneys`, {
+    method: "POST", headers: { "X-Admin-Key": KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: `Browser Bidder ${process.pid}`, firm: "Example Firm (Demo)",
+      email: `browser.bidder.${process.pid}@example.com`, bar_states: ["IL"],
+      service_zips: ["606"], bids_cents: { personal_injury: 7000 },
+    }),
+  })).json();
+  const bidLink = (await (await fetch(`${BASE}/api/v1/admin/attorneys/${bidder.id}/bid-link`,
     { method: "POST", headers: { "X-Admin-Key": KEY } })).json()).link;
   page = await open({ viewport: { width: 390, height: 900 } });
   await page.goto(bidLink);
   await page.waitForSelector("#bid_personal_injury");
   const piCell = (n) => page.$eval("#bid_personal_injury", (el, i) => el.closest("tr").cells[i].textContent, n);
   const rankBefore = await piCell(2);
-  const firstBefore = await piCell(3);  // Avery bid $95: shown rounded up to $100, never exact
+  const firstBefore = await piCell(3);  // Avery bids $95: shown rounded up to $100, never exact
   await page.fill("#bid_personal_injury", "10");
   await page.focus("#save");
   await page.keyboard.press("Enter");
@@ -288,9 +297,9 @@ async function newFamilyLead() {
     return getSelection().toString();
   });
   const selectedBefore = await selectBidders();
-  await fetch(`${BASE}/api/v1/bids/${sam.id}`, {  // put Sam's bid back; the market data changes
-    method: "PUT", headers: { "Content-Type": "application/json", "X-Attorney-Token": tokenOf(bidLink) },
-    body: JSON.stringify({ bids_cents: { personal_injury: 7000 } }),
+  await fetch(`${BASE}/api/v1/admin/attorneys/${bidder.id}`, {  // retire it; the market changes
+    method: "PATCH", headers: { "X-Admin-Key": KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ active: false }),
   });
   await page.waitForTimeout(6000);
   const selectedAfter = await page.evaluate(() => getSelection().toString());

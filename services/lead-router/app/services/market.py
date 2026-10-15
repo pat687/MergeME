@@ -6,10 +6,12 @@ never more than their own bid. This module answers the questions an attorney ask
 before changing a bid: "where do I rank?", "what would it take to be first?" and
 "what do leads actually sell for?".
 
-Rival bids stay private. An attorney sees their place in line and a bid that would
-put them first, rounded up to a whole $10, never another attorney's exact bid. That
-stops a rival from reading the leader's bid and bidding just under it to push the
-leader's price up.
+Other attorneys' bids aren't shown. An attorney sees their place in line, a bid that
+would put them first rounded up to a whole $10, and a recent average price rounded to
+$10 once enough leads have sold. That makes it hard, not impossible, to work out the
+leader's bid and bid just under it to push the leader's price up: a place in line still
+answers "is my bid above theirs?", so bid saves are limited per day and recorded
+(api/bids.py), which makes probing slow and visible.
 """
 
 from __future__ import annotations
@@ -24,6 +26,10 @@ from app.domain.types import BillingPlan, DistributionModel, OfferStatus, Practi
 from app.models import Attorney, Lead, Offer, Territory
 
 RECENT_DAYS = 30
+# Attorneys see the average sale price only once this many leads sold, rounded to $10, so
+# it can't be used to work out what any one lead (and so a rival's bid) sold for.
+MIN_SALES_FOR_AVERAGE = 5
+AVERAGE_STEP_CENTS = 1000
 # "Bid to be first" is rounded up to this step, so it never reveals a rival's exact bid.
 FIRST_PLACE_STEP_CENTS = 1000
 
@@ -109,7 +115,11 @@ def bid_board(db: Session, settings: Settings, me: Attorney, now: datetime) -> l
                 "rank": rank,
                 "to_be_first_cents": to_be_first,
                 "sold_last_30_days": sold,
-                "average_price_cents": average or None,
+                "average_price_cents": (
+                    round(average / AVERAGE_STEP_CENTS) * AVERAGE_STEP_CENTS or None
+                    if sold >= MIN_SALES_FOR_AVERAGE
+                    else None
+                ),
                 "exclusive_territory": area in owned,
             }
         )
@@ -129,11 +139,13 @@ def overview(db: Session, settings: Settings, now: datetime) -> list[dict]:
                     "name": a.name,
                     "bid_cents": a.bids_cents[area],
                     "plan": a.plan,
+                    "below_floor": _pays(a) and a.bids_cents[area] < settings.floor_for(area),
                 }
                 for a in attorneys
                 if area in a.bids_cents
             ),
-            # In line order: paying bidders by bid, then subscribers (who don't bid).
+            # Paying bidders by bid, then subscribers (who don't bid). That is the auction
+            # order; shared areas also put whoever has had fewer leads today first.
             key=lambda b: (b["plan"] == BillingPlan.SUBSCRIPTION, -b["bid_cents"]),
         )
         sold, average = sales.get(area, (0, 0))

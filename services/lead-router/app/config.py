@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     bid_increment_cents: int = Field(default=100, ge=0)
     # Highest bid an attorney can enter themselves; catches typos like $15,000.
     max_bid_cents: int = Field(default=500_000, ge=1)
+    # How many times an attorney can save bid changes in 24 hours. A place in line answers
+    # "is my bid above theirs?", so unlimited saves would let someone home in on a rival's
+    # exact bid; every save is also recorded (bid_changes).
+    max_bid_saves_per_day: int = Field(default=10, ge=1)
     duplicate_window_days: int = 30
     # Daily lead caps reset at midnight in this timezone, not at midnight UTC.
     business_timezone: str = "America/Chicago"
@@ -116,6 +120,14 @@ class Settings(BaseSettings):
                 "ROUTER_FLOOR_PRICE_CENTS needs a price above 0 for every practice area "
                 f'(missing or 0: {", ".join(free)}). Add a "*" entry to cover the rest, '
                 'for example {"personal_injury": 5000, "*": 1500}.'
+            )
+        unbiddable = [
+            area.value for area in PracticeArea if self.floor_for(area) > self.max_bid_cents
+        ]
+        if unbiddable:
+            raise ValueError(
+                f"ROUTER_FLOOR_PRICE_CENTS is above ROUTER_MAX_BID_CENTS ({self.max_bid_cents}) "
+                f"for {', '.join(unbiddable)}, so nobody could bid there."
             )
         return self
 
