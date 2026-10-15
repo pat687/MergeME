@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import smtplib
+import ssl
 from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
 from typing import Any
@@ -16,6 +17,9 @@ log = logging.getLogger(__name__)
 class SmtpMailer:
     def __init__(self, settings: Settings) -> None:
         self.s = settings
+        # Checks the server's certificate and name. Without it smtplib accepts any
+        # certificate, and whoever intercepts the connection gets the mailbox password.
+        self.tls = ssl.create_default_context()
 
     def sender(self) -> str:
         name, address = parseaddr(self.s.smtp_from)
@@ -27,10 +31,14 @@ class SmtpMailer:
         msg["To"] = payload["to"]
         msg["Subject"] = payload["subject"]
         msg.set_content(payload["body"])
-        connect = smtplib.SMTP_SSL if self.s.smtp_ssl else smtplib.SMTP
-        with connect(self.s.smtp_host, self.s.smtp_port, timeout=5) as smtp:
+        host, port = self.s.smtp_host, self.s.smtp_port
+        if self.s.smtp_ssl:
+            connection = smtplib.SMTP_SSL(host, port, timeout=5, context=self.tls)
+        else:
+            connection = smtplib.SMTP(host, port, timeout=5)
+        with connection as smtp:
             if self.s.smtp_starttls and not self.s.smtp_ssl:
-                smtp.starttls()
+                smtp.starttls(context=self.tls)
             if self.s.smtp_username:
                 smtp.login(self.s.smtp_username, self.s.smtp_password or "")
             smtp.send_message(msg)

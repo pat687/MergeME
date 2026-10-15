@@ -80,7 +80,10 @@ ROUTER_SMTP_PASSWORD='the mailbox password'
   whenever you change it.
 - The password lives only in `.env`, which git ignores. Never commit it.
 - Don't run `make demo` while real SMTP is set: its fictional people use `example.com` and
-  `example.org` addresses, so every demo email would bounce back to the mailbox.
+  `example.org` addresses, so every demo email would bounce back to the mailbox. If the
+  demo attorneys are still in the database from an earlier demo, deactivate them first
+  (`PATCH /api/v1/admin/attorneys/{id}` with `{"active": false}`), or start from an
+  empty database with `make clean`, which deletes all data.
 - Check it works: submit one inquiry from the intake form, from a state in
   `ROUTER_LAUNCH_STATES`, with your own email address (inquiries from other states are
   refused and get no receipt). Look for the receipt, then check the dashboard's email

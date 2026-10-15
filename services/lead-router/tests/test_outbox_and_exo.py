@@ -137,8 +137,9 @@ _SMTP_CONNECTIONS: list = []
 class _FakeSmtp:
     """Records what the mailer does instead of talking to a real server."""
 
-    def __init__(self, host, port, timeout=None):
+    def __init__(self, host, port, timeout=None, context=None):
         self.host, self.port, self.calls, self.sent = host, port, [], []
+        self.context = context
         _SMTP_CONNECTIONS.append(self)
 
     def __enter__(self):
@@ -147,8 +148,9 @@ class _FakeSmtp:
     def __exit__(self, *exc):
         return False
 
-    def starttls(self):
+    def starttls(self, context=None):
         self.calls.append("starttls")
+        self.context = context
 
     def login(self, user, password):
         self.calls.append(("login", user))
@@ -172,12 +174,23 @@ def _mailer(monkeypatch, **overrides):
     return _SMTP_CONNECTIONS[0]
 
 
+def _verifies_server(context) -> bool:
+    """The encrypted connection checks the certificate and the host name, so nobody in
+    between can pose as the mail server and collect the password."""
+    import ssl
+
+    return context is not None and (
+        context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
+    )
+
+
 def test_hostinger_port_465_uses_ssl_and_sends_from_info_with_the_platform_name(monkeypatch):
     smtp = _mailer(
         monkeypatch, smtp_port=465, smtp_ssl=True, smtp_username="info@legalleadrouter.com"
     )
     assert type(smtp).__name__ == "Ssl" and (smtp.host, smtp.port) == ("smtp.hostinger.com", 465)
     assert smtp.calls == [("login", "info@legalleadrouter.com")]  # no STARTTLS on SSL
+    assert _verifies_server(smtp.context)
     assert smtp.sent[0]["From"] == "Barrgo Legal Connect <info@legalleadrouter.com>"
 
 
@@ -189,4 +202,5 @@ def test_port_587_uses_starttls_and_keeps_an_explicit_display_name(monkeypatch):
         smtp_from="Legal Lead Router <info@legalleadrouter.com>",
     )
     assert type(smtp).__name__ == "Plain" and smtp.calls == ["starttls"]
+    assert _verifies_server(smtp.context)
     assert smtp.sent[0]["From"] == "Legal Lead Router <info@legalleadrouter.com>"
