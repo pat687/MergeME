@@ -11,11 +11,10 @@ import logging
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 
 from app import __version__, worker
 from app.api import admin, offers, pages, public
-from app.api.pages import STATIC
+from app.api.pages import STATIC, RevalidatedStaticFiles
 from app.api.ratelimit import SlidingWindowLimiter
 from app.config import Settings, get_settings
 from app.db import Base, make_engine, make_session_factory
@@ -75,5 +74,5 @@ def create_app(
 
     for module in (public, offers, admin, pages):
         app.include_router(module.router)
-    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    app.mount("/static", RevalidatedStaticFiles(directory=STATIC), name="static")
     return app
