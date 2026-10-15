@@ -45,27 +45,32 @@ env_get() {
   if [[ ${#line} -ge 2 && $line == \'*\' ]]; then
     line=${line:1:${#line}-2}
   elif [[ ${#line} -ge 2 && $line == \"*\" ]]; then
-    line=${line:1:${#line}-2}
-    line=${line//\\\"/\"}
-    line=${line//\\\\/\\}
+    # Undo env_set's escapes (\\ \" \$), left to right.
+    local raw=${line:1:${#line}-2} i
+    line=
+    for ((i = 0; i < ${#raw}; i++)); do
+      [[ ${raw:i:1} == \\ ]] && ((i + 1 < ${#raw})) && i=$((i + 1))
+      line+=${raw:i:1}
+    done
   fi
   printf '%s' "$line"
 }
 
 # Set KEY to VALUE in .env (replacing every earlier line for KEY), quoted so Docker Compose
-# and the shell both read it back exactly: single quotes, or double quotes when the value
-# has an apostrophe ("O'Brien Law LLC").
+# and the shell both read it back exactly: single quotes, or double quotes with \\ \" \$
+# escaped when the value has an apostrophe ("O'Brien Law LLC") or a backslash.
 env_set() {
   local key=$1 value=$2 line
   [[ $value == *$'\n'* ]] && fail "$key must fit on one line."
   if [[ -z $value ]]; then
     line="$key="
-  elif [[ $value != *"'"* ]]; then
+  elif [[ $value != *"'"* && $value != *\\* ]]; then
     line="$key='$value'"
   else
-    [[ $value == *'$'* || $value == *'`'* ]] && fail "$key can't contain both an apostrophe and \$ or \`."
+    [[ $value == *'`'* ]] && fail "$key can't contain a backtick (\`)."
     value=${value//\\/\\\\}
     value=${value//\"/\\\"}
+    value=${value//\$/\\\$}
     line="$key=\"$value\""
   fi
   LINE=$line awk -v key="$key" '
@@ -77,6 +82,13 @@ env_set() {
   mv .env.tmp .env
 }
 
+# A pasted password often carries a space at one end; say so rather than keep it silently.
+no_edge_spaces() {
+  [[ $1 =~ ^[[:space:]]|[[:space:]]$ ]] &&
+    fail "that password starts or ends with a space. If you pasted it, copy it again without the space."
+  return 0
+}
+
 # ask VAR "Question" default [secret]: the answer goes into the shell variable VAR. An
 # unattended run takes VAR from the environment, then the default.
 ask() {
@@ -84,8 +96,9 @@ ask() {
   if ! interactive; then
     answer=${!var:-$default}
   elif [[ -n $secret ]]; then
-    read -r -s -p "  $question${default:+ [press Enter to keep the current one]}: " answer
+    IFS= read -r -s -p "  $question${default:+ [press Enter to keep the current one]}: " answer
     echo
+    no_edge_spaces "$answer"
     answer=${answer:-$default}
   else
     read -r -p "  $question${default:+ [$default]}: " answer
@@ -130,9 +143,11 @@ check_compose() {
 
 backup_schedule() {
   cat >/etc/cron.d/legalleadrouter-backup <<EOF
-# Nightly database backup (make backup), keeping 30 days. Written by deploy/install.sh.
+# Nightly database backup (make backup), keeping 30 days; old ones are removed only after
+# a backup succeeds. Output goes to syslog (journalctl -t legalleadrouter-backup).
+# Written by deploy/install.sh.
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-15 3 * * * root cd $ROOT && umask 077 && make backup 2>&1 | logger -t legalleadrouter-backup && find backups -name 'router-*.sql.gz' -mtime +30 -delete
+15 3 * * * root cd $ROOT && umask 077 && { make backup && find backups -name 'router-*.sql.gz' -mtime +30 -delete; } 2>&1 | logger -t legalleadrouter-backup
 EOF
   chmod 644 /etc/cron.d/legalleadrouter-backup
   note "Nightly backup at 03:15 server time into $ROOT/backups (kept 30 days)."
@@ -182,14 +197,15 @@ configure() {
   if interactive; then
     local pw pw2
     while :; do
-      read -r -s -p "  Dashboard password (12+ characters)${staff_hash:+ [press Enter to keep the current one]}: " pw
+      IFS= read -r -s -p "  Dashboard password (12+ characters)${staff_hash:+ [press Enter to keep the current one]}: " pw
       echo
+      no_edge_spaces "$pw"
       [[ -z $pw && -n $staff_hash ]] && break
       if ((${#pw} < 12)); then
         note "Too short; use at least 12 characters."
         continue
       fi
-      read -r -s -p "  Same password again: " pw2
+      IFS= read -r -s -p "  Same password again: " pw2
       echo
       [[ $pw == "$pw2" ]] && {
         staff_hash=$(printf '%s\n' "$pw" | docker run --rm -i "$CADDY_IMAGE" caddy hash-password)
@@ -228,7 +244,11 @@ configure() {
   fi
 
   # The marketing site (allowed to show the form in a frame): app.example.com -> example.com.
-  local site=${SITE_DOMAIN:-$(env_get SITE_DOMAIN)}
+  # Worked out again whenever the domain changes, unless SITE_DOMAIN is given explicitly.
+  local site=${SITE_DOMAIN:-}
+  if [[ -z $site && -n $current_domain && $current_domain == "$ROUTER_DOMAIN" ]]; then
+    site=$(env_get SITE_DOMAIN)
+  fi
   if [[ -z $site ]]; then
     site=$ROUTER_DOMAIN
     [[ $ROUTER_DOMAIN == *.*.* ]] && site=${ROUTER_DOMAIN#*.}
@@ -269,6 +289,10 @@ configure() {
     env_set ROUTER_LAUNCH_STATES ""
     env_set ROUTER_COUNSEL_CLEARED ""
   fi
+  # Everything after this (and the nightly backup) reads .env through Docker Compose.
+  docker compose config -q 2>/dev/null ||
+    fail ".env can't be read by Docker Compose: $(docker compose config -q 2>&1 | head -n 1)"
+
   local launch
   launch=$(env_get ROUTER_LAUNCH_STATES)
   if [[ -z $launch || $launch == "[]" ]]; then
@@ -313,6 +337,15 @@ start() {
     docker compose logs --tail 40 lead-router lead-worker caddy >&2 || true
     fail "a service didn't start. The last log lines above say why (\"not ready for production\" lists missing settings)."
   fi
+  # Caddy reads deploy/Caddyfile only when it starts, and `git pull` replaces the file, so
+  # a running Caddy keeps the old copy. Check the new one, then recreate Caddy with it.
+  if ! docker compose exec -T caddy cat /etc/caddy/Caddyfile 2>/dev/null | cmp -s - deploy/Caddyfile; then
+    docker compose exec -T caddy caddy validate --config /dev/stdin --adapter caddyfile <deploy/Caddyfile >/dev/null ||
+      fail "deploy/Caddyfile has an error (above). The site keeps running the previous version."
+    docker compose up -d --no-deps --force-recreate --wait caddy ||
+      fail "Caddy didn't start with the new deploy/Caddyfile."
+    note "Caddy restarted with the updated deploy/Caddyfile."
+  fi
 }
 
 verify() {
@@ -328,7 +361,10 @@ verify() {
     opts+=(--insecure)
     test_cert=1
   fi
-  for _ in $(seq 1 30); do
+  local attempt
+  for attempt in $(seq 1 60); do
+    # Halfway, restart Caddy: after a DNS fix it may be waiting out a long retry delay.
+    ((attempt == 31)) && docker compose restart caddy >/dev/null 2>&1
     if curl -fsS --max-time 5 "${opts[@]}" "$url" >/dev/null 2>&1; then
       if ((test_cert)); then
         note "https://$domain answers (test certificate)."
@@ -340,7 +376,7 @@ verify() {
     sleep 3
   done
   docker compose logs --tail 30 caddy lead-router >&2 || true
-  fail "https://$domain didn't answer within 90 seconds. The logs above usually say why (DNS, ports 80/443 blocked)."
+  fail "https://$domain didn't answer within 3 minutes. The logs above usually say why (DNS, ports 80/443 blocked)."
 }
 
 # Read-only checks of a running install, from this machine.
@@ -368,8 +404,15 @@ checks() {
     code=$(curl "${opts[@]}" -o /dev/null -w '%{http_code}' "https://$domain$path") || true
     if [[ $code == 401 ]]; then ok "$path needs the dashboard login"; else bad "$path answered $code without a login, expected 401"; fi
   done
-  code=$(curl "${opts[@]}" -o /dev/null -w '%{http_code}' "https://$domain/api/v1/admin/attorneys") || true
-  if [[ $code == 401 ]]; then ok "the admin API needs the admin key"; else bad "the admin API answered $code without a key, expected 401"; fi
+  # Caddy's login answers with a Basic challenge; the router's own key check doesn't.
+  if curl "${opts[@]}" -D - -o /dev/null "https://$domain/api/v1/admin/attorneys" | grep -qi '^www-authenticate: *basic'; then
+    ok "the admin API needs the dashboard login (and the admin key)"
+  else
+    bad "the admin API isn't behind the dashboard login"
+  fi
+  code=$(curl "${opts[@]}" -u "$(env_get STAFF_USER):wrong-password" -o /dev/null -w '%{http_code}' \
+    "https://$domain/static/admin.html") || true
+  if [[ $code == 401 ]]; then ok "a wrong dashboard password is refused"; else bad "a wrong dashboard password got $code, expected 401"; fi
   local service port
   for service in lead-router:8000 router-db:5432 mailpit:8025; do
     port=$(docker compose port "${service%:*}" "${service#*:}" 2>/dev/null || true)
@@ -396,7 +439,7 @@ summary() {
   note "Privacy policy: https://$domain/privacy"
   note ""
   note "Check it any time:  ./deploy/install.sh status"
-  note "Next: docs/DEPLOY.md, from \"After the first install\" (test email, backups off the server)."
+  note "Next: docs/DEPLOY.md, \"4. Check it\" (send a test email), then \"After the first install\"."
 }
 
 case ${1:-install} in
@@ -415,8 +458,13 @@ case ${1:-install} in
     [[ -f .env && -n $(env_get STAFF_PASSWORD_HASH) ]] || fail "run sudo ./deploy/install.sh first."
     say "Getting the latest code"
     git pull --ff-only
+    # Continue with the script just pulled: bash would keep running the old copy.
+    exec "$ROOT/deploy/install.sh" _after-pull
+    ;;
+  _after-pull)
     start
     verify
+    checks
     say "Updated."
     ;;
   status)

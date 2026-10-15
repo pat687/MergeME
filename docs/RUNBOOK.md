@@ -2,6 +2,11 @@
 
 How to run, check, back up and fix the stack. Commands are run from the repo root.
 
+> **On a server set up with `deploy/install.sh`,** start, stop and check the site as in
+> [DEPLOY.md](DEPLOY.md#stopping-and-starting), not with `make up` / `make down`: those
+> don't start Caddy, so the site goes offline. Port 8000 isn't published there either, so
+> health checks go through `https://<your domain>/readyz` or `./deploy/install.sh status`.
+
 ## Daily operations
 
 | Task | Command |

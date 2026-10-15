@@ -19,9 +19,10 @@
 		-Server
 	}
 
-	# Staff pages need a login. The admin API behind the dashboard also needs
-	# ROUTER_ADMIN_API_KEY, so this is a second lock, not the only one.
-	@staff path /admin /admin/* /docs /docs/* /redoc /openapi.json
+	# Staff only: the dashboard, the data it shows (the admin API, which also needs
+	# ROUTER_ADMIN_API_KEY) and the API reference. The browser reuses the login for the
+	# dashboard's own requests.
+	@staff path /admin /admin/* /static/admin.html /api/v1/admin/* /docs /docs/* /redoc /openapi.json
 	basic_auth @staff {
 		{$STAFF_USER} {$STAFF_PASSWORD_HASH}
 	}
