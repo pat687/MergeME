@@ -139,6 +139,10 @@ services:
   exo:
     profiles: ["exo"]
     image: ${EXO_IMAGE:-exoplatform/exo-community:7.2.0}
+    # eXo publishes Intel (amd64) images only. Saying so lets Apple-chip Macs run it
+    # through Docker Desktop's Rosetta emulation instead of failing with
+    # "no matching manifest for linux/arm64". No effect on Intel/AMD machines.
+    platform: linux/amd64
     environment:
       EXO_PROXY_VHOST: ${EXO_PROXY_VHOST:-exoapp.local}
       EXO_PROXY_PORT: ${EXO_HTTP_PORT:-80}
