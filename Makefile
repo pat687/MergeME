@@ -68,7 +68,8 @@ check: lint test ## Everything CI runs
 	$(COMPOSE) config --quiet
 
 exo-addon: ## Build eXo + lead-capture add-on (see infra/exo/README.md for versions)
-	docker build --build-arg EXO_IMAGE=$(EXO_BASE_IMAGE) --build-arg LEADCAPTURE_REF=$(LEADCAPTURE_REF) \
+	docker build --platform linux/amd64 \
+		--build-arg EXO_IMAGE=$(EXO_BASE_IMAGE) --build-arg LEADCAPTURE_REF=$(LEADCAPTURE_REF) \
 		-t barrgo/exo-leadcapture:local infra/exo
 
 backup: ## Dump the router database to ./backups (fails loudly if the dump fails)

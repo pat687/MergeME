@@ -56,6 +56,7 @@ How to run, check, back up and fix the stack. Commands are run from the repo roo
 | Attorney link says "offer not found" | Link was altered or the signing secret changed | Links are signed with `ROUTER_LINK_SIGNING_SECRET`; changing it invalidates outstanding links |
 | eXo log: `20,000 milliseconds timeout` then `webDavPathMappingDao` bean errors | eXo started before Elasticsearch was ready | Compose now waits for `exo-search` to be healthy. If you changed that, restore it and restart `exo`. |
 | Elasticsearch cluster `red`, eXo search/documents broken | Disk over 90% full: ES refuses to place shards (high watermark) | Free disk space. The local stack disables the watermark (`cluster.routing.allocation.disk.threshold_enabled=false`). Production should keep it and monitor disk instead. |
+| `make up-full` on a Mac fails with `no matching manifest for linux/arm64` | eXo publishes Intel-only images; an older copy of `docker-compose.yml` doesn't ask for the Intel one | Update to a compose file with `platform: linux/amd64` on the `exo` service, and turn on Rosetta emulation in Docker Desktop (Settings → General). See the README's Mac section. |
 | `exoapp.local` doesn't resolve | No hosts entry | Add `127.0.0.1 exoapp.local` to `/etc/hosts` (Windows: `C:\Windows\System32\drivers\etc\hosts`) |
 | eXo container killed / restarting | Not enough memory | eXo needs ~4 GB, Elasticsearch ~1.5 GB, ONLYOFFICE ~1.5 GB, MySQL ~0.5 GB. Lower `EXO_JVM_SIZE_MAX` or add RAM. |
 

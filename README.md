@@ -115,6 +115,24 @@ Migration guide: **[docs/SHAREPOINT_TO_EXO.md](docs/SHAREPOINT_TO_EXO.md)**.
 
 Run `make` on its own to list every command.
 
+### On a Mac with an Apple chip (M1 to M5)
+
+- **`make up` / `make demo`:** works as is. Install Docker Desktop and start it; every
+  image the lead router uses has a native Apple-chip version. `make` and `python3` come
+  with Apple's Command Line Tools (`xcode-select --install`); the demo script uses only
+  Python's standard library, so that `python3` is enough.
+- **`make up-full`:** eXo publishes Intel-only images, so the compose file asks for the
+  Intel version (`platform: linux/amd64`) and Docker Desktop runs it under emulation. In
+  Docker Desktop, turn on **Settings → General → Use Rosetta for x86_64/amd64 emulation on
+  Apple Silicon**, and give Docker about 10 GB of memory under **Settings → Resources**.
+  Expect eXo's first start to be slower than on an Intel machine. ONLYOFFICE, MySQL,
+  Elasticsearch and Nginx run natively. (Checked: without the setting, the eXo download
+  fails with "no matching manifest for linux/arm64"; with it, the Intel image downloads.
+  eXo itself has not been started on a Mac.)
+- **Hosts file:** `sudo nano /etc/hosts`, add `127.0.0.1 exoapp.local`, save.
+- **`make test`** (optional; CI runs it on every change) needs Python 3.12 or newer:
+  `brew install python@3.13`, then follow [Development](#development) with `python3.13`.
+
 ---
 
 ## Screenshots
@@ -322,7 +340,7 @@ barrgo-ai-stack/
 
 ```bash
 cd services/lead-router
-python -m venv .venv && . .venv/bin/activate
+python3 -m venv .venv && . .venv/bin/activate   # Python 3.12+ (on a Mac: python3.13)
 pip install -e ".[dev]"
 pytest                      # 124 tests in ~7 s (+4 with TEST_POSTGRES_URL set)
 ruff check . && ruff format --check .
