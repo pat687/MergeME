@@ -158,7 +158,8 @@ docker compose start exo
 
 ## People's data: requests, holds and retention
 
-The full procedure is in [legal/PRIVACY_AND_SECURITY_PROGRAM.md](legal/PRIVACY_AND_SECURITY_PROGRAM.md).
+The full procedure is in the privacy and security program (legal review pack, kept outside
+this public repository).
 The tools (all need the admin key; try them at `/docs`):
 
 | Task | Call |

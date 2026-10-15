@@ -249,7 +249,7 @@ def area_notices(platform_name: str) -> dict[str, str]:
 # before leads are sold there. From a 2026-10 legal audit whose sources could not be
 # checked against the official texts, so treat each line as a question for counsel, not
 # an answer. Leads covered here are never sold unless ROUTER_COUNSEL_CLEARED lists
-# "ST" (the whole state) or "ST:practice_area". docs/legal/COUNSEL_BRIEF.md has the detail.
+# "ST" (the whole state) or "ST:practice_area". docs/COMPLIANCE.md section 2 summarizes them.
 _INJURY = ("personal_injury", "medical_malpractice", "workers_comp")
 RESTRICTIONS: dict[str, dict[str, str]] = {
     "CA": {

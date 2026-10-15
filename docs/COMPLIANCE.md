@@ -9,17 +9,18 @@
 > **About the sources.** The state-by-state rules below come from a legal audit made in
 > October 2026. Its researchers could not open the official texts (bar sites, legislatures)
 > from their sandbox, so every citation was checked only against search summaries or
-> memory. Treat them as a list of questions for counsel, not as answers. The full issue map
-> for counsel is [`docs/legal/COUNSEL_BRIEF.md`](legal/COUNSEL_BRIEF.md).
+> memory. Treat them as a list of questions for counsel, not as answers.
 
-Related documents:
+The detailed documents are in the **legal review pack**, kept outside this repository
+because it is public (internal legal analysis shouldn't be published, and analysis that
+hasn't gone to a lawyer is generally not privileged). The owner has them:
 
 | Document | For |
 |---|---|
-| [`legal/COUNSEL_BRIEF.md`](legal/COUNSEL_BRIEF.md) | Your lawyer: the decisions needed, a state-by-state map, practice-area rules |
-| [`legal/ADVERTISING_AND_OUTREACH_RULES.md`](legal/ADVERTISING_AND_OUTREACH_RULES.md) | Whoever runs ads, the Facebook page, the website and cold email to attorneys |
-| [`legal/AGREEMENT_OUTLINES.md`](legal/AGREEMENT_OUTLINES.md) | Counsel: what the attorney agreement, consumer terms and vendor contracts must cover |
-| [`legal/PRIVACY_AND_SECURITY_PROGRAM.md`](legal/PRIVACY_AND_SECURITY_PROGRAM.md) | Staff: retention schedule, privacy requests, legal holds, incident response, security |
+| Counsel brief | Your lawyer: the decisions needed, a state-by-state map, practice-area rules |
+| Advertising and outreach rules | Whoever runs ads, the Facebook page, the website and cold email to attorneys |
+| Agreement outlines | Counsel: what the attorney agreement, consumer terms and vendor contracts must cover |
+| Privacy and security program | Staff: retention schedule, privacy requests, legal holds, incident response, security |
 
 ## 1. What kind of business this software assumes
 
@@ -119,7 +120,7 @@ Notes for counsel:
   attorneys before final consent is the stronger design; it is not built.
 - State telemarketing statutes (for example Florida's FTSA) have stricter consent,
   calling-hour and frequency rules. Calling is done by attorneys; the attorney agreement
-  must put those duties on them (`legal/AGREEMENT_OUTLINES.md`).
+  must put those duties on them (agreement outlines, in the legal review pack).
 
 ## 5. Privacy and confidentiality
 
@@ -129,7 +130,7 @@ Notes for counsel:
 | Prospective-client information (Rule 1.18) | Offer previews and offer emails withhold the name, phone and email, and the description is redacted first (best-effort pattern matching). The form tells people to describe things in general terms and warns that an attorney who sees the inquiry may represent someone else in the matter. Exclusive-territory owners receive full details at once. |
 | Minimum necessary | Injury questions only in injury areas; nothing is kept for refused inquiries; eXo receives no consumer contact details or description unless `ROUTER_EXO_SYNC_CONTACT_DETAILS=true`. |
 | Access and deletion requests | `GET /api/v1/admin/privacy/lookup` finds and exports everything about a person. `POST /api/v1/admin/leads/{id}/erase` erases at two levels: `narrative` (the story, health and matter details, browser, marketing fields, attorneys' pass reasons, and every email copy) or `full` (also name, contact details and IP). An erased lead still on offer is withdrawn, and attorneys who received it are asked to delete it. |
-| Retention | The worker erases on a schedule (`ROUTER_RETENTION_*`): rejected submissions after 30 days, unsold or unserviceable after 90, the story of sold leads after 90, and their consent evidence after about 5 years 3 months; sent email bodies after 14 days. See `legal/PRIVACY_AND_SECURITY_PROGRAM.md`. |
+| Retention | The worker erases on a schedule (`ROUTER_RETENTION_*`): rejected submissions after 30 days, unsold or unserviceable after 90, the story of sold leads after 90, and their consent evidence after about 5 years 3 months; sent email bodies after 14 days. See the privacy and security program in the legal review pack. |
 | Legal holds | `POST /api/v1/admin/leads/{id}/legal-hold` stops erasing and the schedule for that lead until lifted. |
 | Selling personal information (CCPA/CPRA and other states) | Attorneys pay for inquiries, which some laws may treat as a "sale". The flow is built as a consumer-directed disclosure (the consent is the person's request), the privacy page says so, and the Global Privacy Control signal is recorded. **Counsel decides** whether that is enough in each state or an opt-out and further notices are needed. |
 | Health-data states | Injury areas in WA, NV, CT and MD are flagged (section 2), so health-related inquiries from there are refused unless counsel clears them. |
@@ -159,9 +160,9 @@ and no pretending.
       monitored privacy mailbox
 - [ ] Responsible-lawyer naming and ad filing per state (`ROUTER_RESPONSIBLE_ATTORNEYS`)
 - [ ] Advertising, social media and cold-email rules adopted by everyone who markets
-      (`legal/ADVERTISING_AND_OUTREACH_RULES.md`)
+      (advertising and outreach rules, in the legal review pack)
 - [ ] Security program in place: TLS, SSO/MFA for `/admin` and `/docs`, encrypted disks and
-      backups, incident response plan (`legal/PRIVACY_AND_SECURITY_PROGRAM.md`)
+      backups, incident response plan (privacy and security program, in the pack)
 - [ ] Sales-tax treatment of lead sales and subscriptions checked with an accountant
 - [ ] Trademark clearance for the names you use
 - [ ] Keep every old wording version on file (leads store which version they agreed to;

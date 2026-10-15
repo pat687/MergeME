@@ -253,7 +253,8 @@ Consumers agree in plain words, with a separate box for health or immigration de
 told which attorney received their inquiry, and can have their data found and erased; the
 worker erases data on a retention schedule unless a legal hold applies. Attorneys get leads
 only after a recorded bar-license check. See [docs/COMPLIANCE.md](docs/COMPLIANCE.md) and,
-for your lawyer, [docs/legal/COUNSEL_BRIEF.md](docs/legal/COUNSEL_BRIEF.md). This is not
+for your lawyer, the counsel brief in the legal review pack (kept outside this repository,
+which is public). This is not
 legal advice.
 
 All of it is configurable in `.env` (`ROUTER_DISTRIBUTION_POLICY`,
