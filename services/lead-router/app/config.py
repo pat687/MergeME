@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     # False: run `python -m app.worker` as its own process (what docker-compose does).
     embedded_worker: bool = True
     worker_interval_seconds: float = 2.0
+    worker_heartbeat_file: str = "/tmp/lead-worker.heartbeat"
     outbox_max_attempts: int = 5
 
     # --- Distribution rules ---------------------------------------------------

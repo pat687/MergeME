@@ -63,7 +63,12 @@ services:
       lead-router:
         condition: service_healthy
     healthcheck:
-      disable: true
+      # Healthy only while the worker keeps finishing cycles (it touches a heartbeat file).
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
 
   router-db:

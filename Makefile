@@ -36,7 +36,7 @@ logs: ## Follow the router and worker logs
 	$(COMPOSE) logs -f lead-router lead-worker
 
 seed: ## Load the six fictional demo attorneys
-	$(COMPOSE) exec lead-router python -m app.seed
+	$(COMPOSE) exec -T lead-router python -m app.seed
 
 demo: seed ## Run the narrated end-to-end demo against the running stack
 	@set -a; . ./.env; set +a; $(PY) scripts/demo.py

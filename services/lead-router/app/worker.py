@@ -5,6 +5,8 @@ Every couple of seconds it:
   2. sends whatever is waiting in the outbox (emails, eXo updates)
 
 Run it inside the API (simple) or as its own process: `python -m app.worker`.
+`python -m app.worker --check` exits 0 only if the worker finished a cycle recently
+(Docker uses it as the health check, so a stuck worker shows up as unhealthy).
 """
 
 from __future__ import annotations
@@ -12,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import sys
 import time
+from pathlib import Path
 
 from sqlalchemy.orm import sessionmaker
 
@@ -60,9 +64,24 @@ async def run_forever(
         await asyncio.sleep(settings.worker_interval_seconds)
 
 
+def heartbeat_is_fresh(path: Path, max_age_seconds: float, now: float | None = None) -> bool:
+    """True if the worker touched its heartbeat file within the last `max_age_seconds`."""
+    try:
+        age = (time.time() if now is None else now) - path.stat().st_mtime
+    except FileNotFoundError:
+        return False
+    return age <= max_age_seconds
+
+
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = get_settings()
+    heartbeat = Path(settings.worker_heartbeat_file)
+    if "--check" in sys.argv[1:]:
+        # A few missed cycles are tolerated; a worker silent for longer is unhealthy.
+        max_age = max(30.0, settings.worker_interval_seconds * 10)
+        sys.exit(0 if heartbeat_is_fresh(heartbeat, max_age) else 1)
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     engine = make_engine(settings.database_url)
     Base.metadata.create_all(engine)
     session_factory = make_session_factory(engine)
@@ -85,6 +104,7 @@ def main() -> None:
     while not stopping:
         try:
             run_cycle(session_factory, settings, handlers)
+            heartbeat.touch()
         except Exception:
             log.exception("worker cycle failed; will try again")
         time.sleep(settings.worker_interval_seconds)

@@ -110,3 +110,17 @@ def test_assign_before_create_raises_so_the_outbox_retries():
         assert "retry" in str(err)
     else:
         raise AssertionError("expected ExoSyncError")
+
+
+# --------------------------------------------------------------------------- #
+# Worker health check (used by Docker to spot a stuck worker)
+# --------------------------------------------------------------------------- #
+def test_worker_heartbeat_freshness(tmp_path):
+    from app.worker import heartbeat_is_fresh
+
+    beat = tmp_path / "heartbeat"
+    assert not heartbeat_is_fresh(beat, 30)  # never ran yet
+    beat.touch()
+    mtime = beat.stat().st_mtime
+    assert heartbeat_is_fresh(beat, 30, now=mtime + 29)
+    assert not heartbeat_is_fresh(beat, 30, now=mtime + 31)
