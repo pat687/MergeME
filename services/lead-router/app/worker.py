@@ -21,7 +21,7 @@ from pathlib import Path
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings, get_settings
-from app.db import Base, make_engine, make_session_factory, utcnow
+from app.db import Base, make_engine, make_session_factory, upgrade_schema, utcnow
 from app.services import offers, outbox
 from app.services.exo_sync import ExoLeadCaptureClient
 from app.services.notifier import make_mailer
@@ -94,6 +94,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     engine = make_engine(settings.database_url)
     Base.metadata.create_all(engine)
+    upgrade_schema(engine)
     session_factory = make_session_factory(engine)
     handlers = build_handlers(settings)
 

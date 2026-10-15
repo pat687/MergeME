@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Engine, create_engine
+from sqlalchemy import DateTime, Engine, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.types import TypeDecorator
@@ -50,3 +50,22 @@ def make_engine(url: str) -> Engine:
 
 def make_session_factory(engine: Engine) -> sessionmaker:
     return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+# Columns added after the first release. create_all() makes new tables but never changes
+# existing ones, so a database from an earlier version gets these added at startup.
+# Each must be nullable, so existing rows stay valid.
+ADDED_COLUMNS = [("leads", "max_attorneys", "INTEGER")]
+
+
+def upgrade_schema(engine: Engine) -> None:
+    """Add any missing ADDED_COLUMNS. The router and the worker both run this at startup;
+    on Postgres IF NOT EXISTS makes two of them doing it at once harmless."""
+    existing = inspect(engine)
+    guard = "IF NOT EXISTS " if engine.dialect.name == "postgresql" else ""
+    with engine.begin() as conn:
+        for table, column, sql_type in ADDED_COLUMNS:
+            if not existing.has_table(table):
+                continue
+            if column not in {c["name"] for c in existing.get_columns(table)}:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {guard}{column} {sql_type}"))

@@ -6,7 +6,7 @@ attorneys. It's built to follow attorney-advertising ethics rules from the start
 
 [![CI](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml)
 ![Python 3.13](https://img.shields.io/badge/python-3.13-blue)
-![Tests](https://img.shields.io/badge/tests-128%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-148%20passing-brightgreen)
 ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-informational)
 
 ---
@@ -133,8 +133,8 @@ Run `make` on its own to list every command.
 
 | Check | Result |
 |---|---|
-| Unit and API tests (`make test`) | 124 passed, plus 4 concurrency tests that run against real Postgres (in CI, or with `TEST_POSTGRES_URL`) |
-| Browser regression checks (`make ui-check`, also in CI) | 15 of 15: Pass with Cancel/Escape/Enter, old `?t=` links, double-click accept, countdown, screen-reader status, field errors with the real reason, no submit before load, table rows with real buttons, refresh that keeps focus and scroll position, live detail panel, 390px layout, no JS errors. The checks for the dashboard fixes were confirmed to fail when the old code is put back |
+| Unit and API tests (`make test`) | 143 passed, plus 5 concurrency tests that run against real Postgres (in CI, or with `TEST_POSTGRES_URL`) |
+| Browser regression checks (`make ui-check`, also in CI) | 18 of 18: Pass with Cancel/Escape/Enter, old `?t=` links, double-click accept, countdown, screen-reader status and load errors, field errors with the real reason, no submit before load, table rows with real buttons, refresh that keeps focus and scroll position (focused row on or off screen), live detail panel that doesn't move the page or the offers table, 390px layout, no JS errors. The checks for the dashboard and offer-page fixes were confirmed to fail when the old code is put back |
 | Lint and format (`ruff`) | Clean |
 | Router stack in Docker on PostgreSQL (`make up`) | Healthy; `make demo` meets all of its built-in expectations |
 | Emails through the outbox to Mailpit | 12 of 12 delivered; contact fields withheld from offer emails and the description redacted |
@@ -296,7 +296,7 @@ barrgo-ai-stack/
 │   │   ├── schemas.py          # request/response validation
 │   │   ├── worker.py           # background worker
 │   │   └── seed.py             # six fictional demo attorneys
-│   ├── tests/                  # 128 tests: unit, API stories, Postgres concurrency
+│   ├── tests/                  # 148 tests: unit, API stories, Postgres concurrency
 │   └── Dockerfile              # multi-stage, non-root
 └── docs/                       # architecture, compliance, migration, runbook, ADRs, ELI10
 ```
@@ -324,7 +324,7 @@ barrgo-ai-stack/
 cd services/lead-router
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-pytest                      # 124 tests in ~7 s (+4 with TEST_POSTGRES_URL set)
+pytest                      # 143 tests in ~6 s (+5 with TEST_POSTGRES_URL set)
 ruff check . && ruff format --check .
 uvicorn app.main:create_app --factory --reload   # SQLite, embedded worker, http://localhost:8000
 python -m app.seed          # demo attorneys

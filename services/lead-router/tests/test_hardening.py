@@ -534,3 +534,145 @@ def test_long_marketing_tags_are_trimmed_not_rejected(client, db):
     r = client.post("/api/v1/intake", json=inquiry_data(utm_source="x" * 300))
     assert r.status_code == 201, r.text
     assert db.get(Lead, r.json()["lead_id"]).utm_source == "x" * 120
+
+
+# --------------------------------------------------------------------------- #
+# Fourth review round
+# --------------------------------------------------------------------------- #
+def _bidders(client, n: int) -> None:
+    for i in range(n):
+        client.post(
+            "/api/v1/admin/attorneys",
+            json={
+                "name": f"Round4 Bidder {i}",
+                "firm": "Example Firm (Demo)",
+                "email": f"round4.{i}@example.com",
+                "bar_states": ["IL"],
+                "service_zips": ["606"],
+                "bids_cents": {"personal_injury": 6000 + i},
+            },
+            headers=ADMIN,
+        )
+
+
+def test_consent_limit_is_the_number_agreed_to_not_todays_setting(client, settings):
+    _bidders(client, 3)  # six personal-injury bidders in all
+    lead_id = submit(client, 1)["lead_id"]
+    settings.shared_max_attorneys = 5  # raised while the lead is in flight
+    while pending := [o for o in lead_offers(client, lead_id).values() if o["status"] == "pending"]:
+        assert act(client, pending[0], "decline").status_code == 200
+    asked = [o for o in lead_offers(client, lead_id).values() if o["activated_at"]]
+    assert len(asked) == 3
+
+
+def test_line_up_closes_as_soon_as_the_last_allowed_attorney_is_asked(client):
+    _bidders(client, 3)
+    lead_id = submit(client, 1)["lead_id"]
+    for name in ("Avery Stone", "Jordan Reyes"):
+        assert act(client, lead_offers(client, lead_id)[name], "decline").status_code == 200
+    line = lead_offers(client, lead_id)
+    assert line["Sam Okafor"]["status"] == "pending"  # the third and last one asked
+    closed = [o for o in line.values() if "line-up full" in (o["decline_reason"] or "")]
+    assert len(closed) == 3 and all(o["status"] == "skipped" for o in closed)
+    trail = client.get(f"/api/v1/admin/leads/{lead_id}", headers=ADMIN).json()["audit"]
+    assert [a["event"] for a in trail].count("line_up_full") == 1  # one entry, not one each
+
+
+def test_shared_max_attorneys_must_be_at_least_one():
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, shared_max_attorneys=0)
+
+
+def test_older_databases_get_the_new_column_at_startup(tmp_path):
+    from sqlalchemy import inspect, text
+
+    from app.db import Base, make_engine, upgrade_schema
+
+    engine = make_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE leads DROP COLUMN max_attorneys")
+        )  # as an old release made it
+    upgrade_schema(engine)
+    upgrade_schema(engine)  # and again: safe to repeat
+    assert "max_attorneys" in {c["name"] for c in inspect(engine).get_columns("leads")}
+
+
+@pytest.mark.parametrize(
+    ("name", "description"),
+    [
+        ("জয়", "Hi, I'm জয় and I was hurt at work."),  # Bengali, precomposed
+        ("Nguyễn", "This is Nguyễn, rear-ended last week."),  # typed accents
+        ("Prescott,Jr.", "Mr. Prescott here, rear-ended last week."),
+    ],
+)
+def test_names_are_redacted_whatever_unicode_form_or_comma_they_use(name, description):
+    lead = Lead(
+        first_name="Pat",
+        last_name=inquiry(last_name=name).last_name,
+        description=description,
+        email="x@example.org",
+        phone="3125550100",
+    )
+    summary = lead.summary()
+    assert "[redacted]" in summary
+    for part in ("জ", "Nguy", "Prescott"):
+        assert part not in summary, summary
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["18 County Line Ct", "1234 City View Ct", "77 Justice Court", "300 Family Tree Ct"],
+)
+def test_streets_named_after_courts_are_still_addresses(address):
+    assert compliance.redact(f"I live near {address} with my kids.") == (
+        "I live near [redacted] with my kids."
+    )
+
+
+def test_court_names_with_years_are_kept_including_immigration_and_possessives():
+    text = (
+        "My 2024 Immigration Court hearing was moved. In 2019 Surrogate's Court and "
+        "2021 Common Pleas Court the cases were closed."
+    )
+    assert compliance.redact(text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I have lived at 4417 Kedzie for years.",
+        "My address is: 88 Wabash",
+        "i live at 918 n albany",
+    ],
+)
+def test_more_ways_of_writing_an_address_are_redacted(text):
+    out = compliance.redact(text)
+    for secret in ("4417", "kedzie", "88", "wabash", "918", "albany"):
+        assert secret not in out.lower(), out
+
+
+def test_ordinary_sentences_after_lived_at_are_left_alone():
+    text = "We lived at 2 different places last year."
+    assert compliance.redact(text) == text
+
+
+def test_names_that_grow_under_nfc_get_a_422_not_a_500(client):
+    r = client.post("/api/v1/intake", json=inquiry_data(first_name="שּׁ" * 40))
+    assert r.status_code == 422
+
+
+def test_control_characters_are_removed_not_stored(client, db):
+    data = inquiry_data(utm_source="spring\x00sale", description="My back hurts\x00 after a crash.")
+    r = client.post("/api/v1/intake", json=data)
+    assert r.status_code == 201, r.text
+    lead = db.get(Lead, r.json()["lead_id"])
+    assert (lead.utm_source, lead.description) == ("springsale", "My back hurts after a crash.")
+
+
+def test_pages_answer_304_when_unchanged(client):
+    first = client.get("/admin")
+    again = client.get("/admin", headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304
+    assert again.headers["cache-control"] == "no-cache"

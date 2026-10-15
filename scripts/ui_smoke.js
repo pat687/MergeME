@@ -87,6 +87,12 @@ async function newFamilyLead() {
   lead = await adminGet(`/api/v1/admin/leads/${lead.id}`);
   check("Enter in the reason box confirms the pass", lead.offers.find((o) => o.id === offer.id).status === "declined");
 
+  // Offer page: a bad link's error is announced, not just shown.
+  await page.goto(`${BASE}/offer/${lead.offers[0].id}#t=not-a-real-token`);
+  await page.waitForSelector("#view .error");
+  check("a link that fails to load is announced to screen readers",
+    (await page.textContent("#status")).includes("not found"));
+
   // Offer page: an old-style '?t=' link still works, even with a '#' part, and the token
   // is moved out of the address so it isn't sent to the server again.
   const old = lead.offers.find((o) => o.status === "pending");
@@ -185,18 +191,44 @@ async function newFamilyLead() {
   check("auto-refresh keeps focus and doesn't scroll the page",
     after[0] >= scrolledTo && after[1] === lead.id, JSON.stringify({ scrolledTo, after }));
 
-  // Focus inside the detail panel, then change the lead: the panel updates and keeps focus.
-  const link = await page.$("#detail a");
-  await link.focus();
+  // A focused row that is on screen, a few rows down, must not jump either. (Removing
+  // the focused button while rebuilding makes the browser re-anchor the page.)
+  const rowId = await page.evaluate(() => {
+    const button = document.querySelector("#rows tr:nth-child(5) button.rowlink");
+    button.focus({ preventScroll: true });
+    window.scrollTo(0, window.scrollY + button.getBoundingClientRect().top - 80);
+    return button.dataset.id;
+  });
+  const rowTop = (id) => page.evaluate((i) => [window.scrollY,
+    document.querySelector(`#rows button[data-id="${i}"]`).getBoundingClientRect().top,
+    document.activeElement?.dataset?.id], id);
+  const rowBefore = await rowTop(rowId);
+  const another = await newFamilyLead();
+  await page.waitForSelector(`#rows button[data-id="${another.id}"]`, { timeout: 8000 });
+  const rowAfter = await rowTop(rowId);
+  check("a focused row on screen stays put when rows are rebuilt",
+    Math.abs(rowAfter[1] - rowBefore[1]) <= 50 && rowAfter[0] >= rowBefore[0] && rowAfter[2] === rowId,
+    JSON.stringify({ rowBefore, rowAfter }));
+
+  // Focus a link inside the detail panel (on a phone this also scrolls the offers table
+  // sideways), then change the lead: the panel updates, focus stays, nothing moves.
+  // (The lead opened above is still the one shown in the panel.)
+  await page.locator("#detail a").first().focus();
+  const place = () => page.evaluate(() => [window.scrollY, document.querySelector("#detail .table-wrap")?.scrollLeft ?? 0]);
+  const placeBefore = await place();
   const first = lead.offers[0];
   await fetch(`${BASE}/api/v1/offers/${first.id}/decline`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: tokenOf(first.link), reason: "smoke-test pass reason" }),
   });
   await page.waitForSelector("#detail >> text=smoke-test pass reason", { timeout: 8000 }).catch(() => null);
+  const placeAfter = await place();
   check("open lead keeps updating, with focus kept in the panel",
     (await page.$("#detail >> text=smoke-test pass reason")) !== null
       && await page.evaluate(() => document.getElementById("detail").contains(document.activeElement)));
+  check("updating the open lead doesn't move the page or the offers table",
+    Math.abs(placeAfter[0] - placeBefore[0]) <= 2 && placeAfter[1] === placeBefore[1],
+    JSON.stringify({ placeBefore, placeAfter }));
 
   check("no JavaScript errors on any page", pageErrors.length === 0, pageErrors.join(" | "));
   await browser.close();

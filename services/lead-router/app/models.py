@@ -98,6 +98,9 @@ class Lead(Base):
     consent: Mapped[bool] = mapped_column(Boolean)
     consent_version: Mapped[str] = mapped_column(String(40))
     consent_text: Mapped[str] = mapped_column(Text)
+    # The "up to N attorneys" in that text. Stored so a later change to the setting can't
+    # widen what this person agreed to. Empty only on leads from before it was recorded.
+    max_attorneys: Mapped[int | None] = mapped_column(Integer)
     consent_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(String(300))

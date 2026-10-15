@@ -155,3 +155,16 @@ def test_accept_racing_the_expiry_worker_stays_consistent(pg):
             else:
                 assert rows[1] == OfferStatus.EXPIRED and rows[2] == OfferStatus.PENDING
                 assert state.status == LeadStatus.OFFERED and not accepted
+
+
+def test_router_and_worker_can_upgrade_the_schema_at_the_same_time(pg):
+    from sqlalchemy import inspect, text
+
+    from app.db import upgrade_schema
+
+    engine = make_engine(PG_URL)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE leads DROP COLUMN max_attorneys"))  # an older database
+    all_at_once(4, lambda _i: upgrade_schema(make_engine(PG_URL)))  # raises if any collide
+    assert "max_attorneys" in {c["name"] for c in inspect(engine).get_columns("leads")}
+    engine.dispose()
