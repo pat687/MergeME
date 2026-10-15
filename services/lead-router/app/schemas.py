@@ -86,6 +86,7 @@ ZIP_PLUS4_RE = re.compile(r"^([0-9]{5})(?:[- ]?[0-9]{4})?\Z")  # 60614, 60614-12
 # Commas for "Smith, Jr."; zero-width (non-)joiners are part of how some scripts are typed.
 NAME_PUNCTUATION = frozenset(" '-.,\u2019\u200c\u200d")
 UTM_MAX = 120
+REASON_MAX = 200  # matches offers.decline_reason
 NAME_MAX = 80  # matches the String(80) columns
 
 
@@ -119,9 +120,14 @@ def _check_name(value: str) -> str:
 
 def clean_text(value: str) -> str:
     """Free text as stored: NFC form, and no control characters other than line breaks
-    and tabs (Postgres can't store NUL, and the rest only hide text)."""
+    and tabs (Postgres can't store NUL, and the rest only hide text). Control characters
+    that act as spacing (a Word soft line break, a page break) become a space, so the
+    words around them don't run together."""
     value = unicodedata.normalize("NFC", value)
-    return "".join(ch for ch in value if ch in "\n\r\t" or unicodedata.category(ch) != "Cc")
+    return "".join(
+        ch if ch in "\n\r\t" or unicodedata.category(ch) != "Cc" else (" " if ch.isspace() else "")
+        for ch in value
+    )
 
 
 def _check_states(value: list[str]) -> list[str]:
@@ -342,12 +348,13 @@ class TerritoryOut(TerritoryCreate):
 # --------------------------------------------------------------------------- #
 class OfferAction(BaseModel):
     token: str
-    reason: str | None = Field(default=None, max_length=200)
+    reason: str | None = Field(default=None, max_length=REASON_MAX)
 
     @field_validator("reason")
     @classmethod
     def _clean_reason(cls, value: str | None) -> str | None:
-        return clean_text(value) if value else value
+        # Trimmed after cleaning: NFC can lengthen a few letters past the column size.
+        return clean_text(value)[:REASON_MAX] if value else value
 
 
 class OfferView(BaseModel):

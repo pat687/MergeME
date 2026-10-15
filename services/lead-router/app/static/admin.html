@@ -141,6 +141,16 @@
 
   let detailSeq = 0;
   let lastDetail = "";
+  let shownId = null;
+
+  // Scroll a wide table sideways just enough to show el, without moving the page.
+  function revealSideways(el) {
+    const wrap = el?.closest?.(".table-wrap");
+    if (!wrap) return;
+    const e = el.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+    if (e.right > w.right) wrap.scrollLeft += Math.ceil(e.right - w.right);
+    else if (e.left < w.left) wrap.scrollLeft -= Math.ceil(w.left - e.left);
+  }
 
   async function showLead(id, { scroll = true, background = false } = {}) {
     selected = id;
@@ -162,8 +172,10 @@
       if (json === lastDetail || selecting) return;
     }
     lastDetail = json;
-    // The offers table scrolls sideways on a phone; keep it where it was.
-    const sideways = [...panel.querySelectorAll(".table-wrap")].map((w) => w.scrollLeft);
+    // The offers table scrolls sideways on a phone; keep it where it was when this same
+    // lead is redrawn (a different lead starts at the left edge).
+    const sideways = shownId === id ? [...panel.querySelectorAll(".table-wrap")].map((w) => w.scrollLeft) : [];
+    shownId = id;
     if (had) letGo();
     const factors = d.score_breakdown.map((f) => h("div", { class: "factor" },
       h("div", {}, h("div", {}, f.reason),
@@ -192,6 +204,7 @@
     if (had) {
       const again = focusables();
       refocus(again.find((el) => hadHref && el.getAttribute("href") === hadHref) ?? again[hadIndex] ?? panel.querySelector("h2"));
+      revealSideways(document.activeElement);  // a wider column must not hide the focused link
     }
     if (scroll && window.innerWidth < 900) panel.scrollIntoView({ behavior: "smooth" });
   }

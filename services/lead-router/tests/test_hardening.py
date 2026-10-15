@@ -676,3 +676,71 @@ def test_pages_answer_304_when_unchanged(client):
     again = client.get("/admin", headers={"If-None-Match": first.headers["etag"]})
     assert again.status_code == 304
     assert again.headers["cache-control"] == "no-cache"
+
+
+# --------------------------------------------------------------------------- #
+# Fifth review round
+# --------------------------------------------------------------------------- #
+def test_leads_from_before_the_limit_was_stored_use_their_consent_text(client, settings, db):
+    _bidders(client, 3)
+    lead_id = submit(client, 1)["lead_id"]
+    db.get(Lead, lead_id).max_attorneys = None  # as on a lead created before the upgrade
+    db.commit()
+    settings.shared_max_attorneys = 5
+    while pending := [o for o in lead_offers(client, lead_id).values() if o["status"] == "pending"]:
+        assert act(client, pending[0], "decline").status_code == 200
+    assert len([o for o in lead_offers(client, lead_id).values() if o["activated_at"]]) == 3
+
+
+def test_spacing_control_characters_keep_words_apart_so_names_stay_hidden(client, db):
+    data = inquiry_data(
+        first_name="Maria",
+        last_name="Lopez",
+        description="My name is Maria\x0bLopez, custody case.",
+    )
+    r = client.post("/api/v1/intake", json=data)
+    assert r.status_code == 201, r.text
+    lead = db.get(Lead, r.json()["lead_id"])
+    assert lead.description == "My name is Maria Lopez, custody case."
+    assert "Maria" not in lead.summary() and "Lopez" not in lead.summary()
+
+
+def test_a_pass_reason_that_grows_under_nfc_is_trimmed_not_a_500(client, db):
+    offer = lead_offers(client, submit(client, 1, **FAMILY)["lead_id"])["Riley Chen"]
+    r = client.post(
+        f"/api/v1/offers/{offer['id']}/decline",
+        json={"token": token(offer["id"]), "reason": "שּׁ" * 200},
+    )
+    assert r.status_code == 200, r.text
+    assert len(db.get(Offer, offer["id"]).decline_reason) <= 200
+
+
+def test_more_court_names_are_kept():
+    text = (
+        "In 2022 Domestic Violence Court I got an order, then 2023 Drug Treatment Court, "
+        "2018 Juvenile Dependency Court and 2019 Family Law Court."
+    )
+    assert compliance.redact(text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["i live at 4417 kedzie", "my address is 4417 kedzie", "i live at 918 north albany"],
+)
+def test_lowercase_addresses_after_a_lead_in_are_redacted(text):
+    out = compliance.redact(text)
+    for secret in ("4417", "kedzie", "918", "albany"):
+        assert secret not in out, out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "we stayed at 1500 a month",
+        "I live at 100 percent capacity",
+        "we stayed at 300 dollars a night",
+        "lived at 1000 different places",
+    ],
+)
+def test_amounts_after_live_at_are_not_mistaken_for_addresses(text):
+    assert compliance.redact(text) == text

@@ -234,7 +234,8 @@ sequenceDiagram
 Every bidder above the floor joins the line, but no more attorneys are *asked*
 (`activated_at` set) than the person agreed to. That number is stored on the lead with
 the consent (`leads.max_attorneys`), so raising `ROUTER_SHARED_MAX_ATTORNEYS` later can't
-widen it for leads already in flight. Attorneys skipped while waiting in line (inactive,
+widen it for leads already in flight. Leads created before that column existed use the
+number written in their stored consent text ("up to 3 participating attorneys"). Attorneys skipped while waiting in line (inactive,
 at their cap) were never shown the lead, so they don't count, and the next bidder gets
 their place. As soon as the last allowed attorney is asked, everyone still queued is marked
 `skipped` with the reason "line-up full" in one update, with one `line_up_full` entry in
