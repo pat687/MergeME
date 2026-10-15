@@ -285,7 +285,7 @@ check_dns() {
   say "3/5  DNS"
   local domain public resolved
   domain=$(env_get ROUTER_DOMAIN)
-  public=$(curl -fsS4 --max-time 10 https://api.ipify.org || true)
+  public=$(curl -fs4 --max-time 10 https://api.ipify.org || true)
   resolved=$(getent ahostsv4 "$domain" | awk '{print $1; exit}' || true)
   if [[ -n $public && $resolved == "$public" ]]; then
     note "$domain points to this server ($public)."
