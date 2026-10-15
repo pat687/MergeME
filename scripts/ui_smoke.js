@@ -191,6 +191,23 @@ async function newFamilyLead() {
       && consentShown.includes("(312) 555-0199"),
     JSON.stringify({ injuryForm, familyForm, consentShown: consentShown.slice(0, 160) }));
 
+  // Soft launch (no state open yet): the form says so as soon as it loads.
+  page = await open({ viewport: { width: 390, height: 844 } });
+  await page.route("**/api/v1/meta", async (route) => {
+    const res = await route.fetch();
+    await route.fulfill({ response: res, json: { ...(await res.json()), open: {} } });
+  });
+  await page.goto(`${BASE}/`);
+  await page.waitForFunction(() => document.getElementById("availability").textContent);
+  const softLaunch = await page.evaluate(() => ({
+    notice: document.getElementById("availability").textContent,
+    detailsVisible: !!document.getElementById("details").offsetParent,
+    submitDisabled: document.getElementById("submit").disabled,
+  }));
+  check("with no state open yet, the form says so on load and can't be sent",
+    softLaunch.notice.startsWith("Sorry, we aren't accepting inquiries yet.") && !softLaunch.detailsVisible
+      && softLaunch.submitDisabled, JSON.stringify(softLaunch));
+
   page = await open();
   await page.goto(`${BASE}/privacy`);
   await page.waitForFunction(() => document.querySelector("[data-fill=rejected]")?.textContent);

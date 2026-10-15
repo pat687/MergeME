@@ -74,8 +74,8 @@ exo-addon: ## Build eXo + lead-capture add-on (see infra/exo/README.md for versi
 		-t barrgo/exo-leadcapture:local infra/exo
 
 backup: ## Dump the router database to ./backups (fails loudly if the dump fails)
-	@mkdir -p backups
-	@f=backups/router-$$(date +%Y%m%d-%H%M%S).sql; \
+	@mkdir -p backups && chmod 700 backups
+	@umask 077; f=backups/router-$$(date +%Y%m%d-%H%M%S).sql; \
 	if $(COMPOSE) exec -T router-db pg_dump -U router --clean --if-exists router > $$f.tmp; then \
 		mv $$f.tmp $$f && gzip $$f && echo "Backup written: $$f.gz"; \
 	else \

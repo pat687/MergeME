@@ -1,0 +1,77 @@
+# =============================================================================
+#  Production on one server: Caddy in front with automatic HTTPS, and nothing
+#  else reachable from the internet. Layered on top of docker-compose.yml.
+#
+#  deploy/install.sh writes COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.prod.yml
+#  into .env, so plain `docker compose ...`, `make logs` and `make backup` on the server
+#  use this file too. See docs/DEPLOY.md.
+# =============================================================================
+
+x-logs: &logs
+  # Docker keeps container logs forever by default; cap them so they can't fill the disk.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  caddy:
+    image: caddy:2.10.2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      ROUTER_DOMAIN: ${ROUTER_DOMAIN:?set ROUTER_DOMAIN (run deploy/install.sh)}
+      SITE_DOMAIN: ${SITE_DOMAIN:?set SITE_DOMAIN (run deploy/install.sh)}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL (run deploy/install.sh)}
+      STAFF_USER: ${STAFF_USER:?set STAFF_USER (run deploy/install.sh)}
+      STAFF_PASSWORD_HASH: ${STAFF_PASSWORD_HASH:?set the dashboard password (run deploy/install.sh)}
+      # Extra Caddy global options. Only for testing: "local_certs" uses a private CA
+      # instead of Let's Encrypt.
+      CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificates: keep this volume, or they're requested again
+      - caddy_config:/config
+    networks:
+      default:
+        # Fixed, so the router can trust exactly this address for X-Forwarded-For.
+        ipv4_address: 10.203.57.10
+    depends_on:
+      lead-router:
+        condition: service_healthy
+    logging: *logs
+    restart: unless-stopped
+
+  lead-router:
+    # Only Caddy reaches it. A published port would also skip the server's firewall,
+    # because Docker writes its own rules ahead of ufw.
+    ports: !reset []
+    environment:
+      # The visitor address Caddy passes on is believed from Caddy and nobody else.
+      FORWARDED_ALLOW_IPS: 10.203.57.10
+    logging: *logs
+
+  lead-worker:
+    logging: *logs
+
+  router-db:
+    logging: *logs
+
+  mailpit:
+    # Not started in production (deploy/install.sh doesn't list it). If it ever is, its
+    # inbox stays off the internet.
+    ports: !reset []
+
+networks:
+  default:
+    ipam:
+      config:
+        # Pinned, so Caddy's fixed address above always exists (see "Behind a reverse
+        # proxy" in docs/RUNBOOK.md).
+        - subnet: 10.203.57.0/24
+
+volumes:
+  caddy_data:
+  caddy_config:

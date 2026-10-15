@@ -1,0 +1,30 @@
+# HTTPS front door for the lead router. Caddy gets and renews the certificate from
+# Let's Encrypt by itself, and sends plain http:// visitors to https://.
+# The {$...} values come from .env through deploy/docker-compose.prod.yml.
+{
+	email {$ACME_EMAIL}
+	{$CADDY_GLOBAL_OPTIONS}
+}
+
+{$ROUTER_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		# Browsers use only HTTPS for this name from now on.
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		# The form may appear inside this site and the marketing site, nowhere else, so
+		# nobody can collect consent with it inside a page dressed up as something else.
+		Content-Security-Policy "frame-ancestors 'self' https://{$SITE_DOMAIN} https://www.{$SITE_DOMAIN}"
+		-Server
+	}
+
+	# Staff pages need a login. The admin API behind the dashboard also needs
+	# ROUTER_ADMIN_API_KEY, so this is a second lock, not the only one.
+	@staff path /admin /admin/* /docs /docs/* /redoc /openapi.json
+	basic_auth @staff {
+		{$STAFF_USER} {$STAFF_PASSWORD_HASH}
+	}
+
+	reverse_proxy lead-router:8000
+}
