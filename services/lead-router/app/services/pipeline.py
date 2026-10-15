@@ -21,7 +21,7 @@ from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.domain import compliance, scoring, scrubbing
+from app.domain import compliance, scoring, scrubbing, zipcodes
 from app.domain.distribution import DistributionPlan, plan_distribution
 from app.domain.matching import Candidate
 from app.domain.types import DistributionModel, LeadStatus, OfferStatus
@@ -138,6 +138,15 @@ def refusal(settings: Settings, inquiry: IntakeRequest) -> str | None:
     workers' comp claim. Returns the compliance.consumer_message key, or None."""
     if settings.closed_reason(inquiry.state, inquiry.practice_area):
         return "closed"
+    # The ZIP's own state must be open too: typing an open state with a ZIP code from a
+    # closed one doesn't get an inquiry through.
+    zip_state = zipcodes.state_for_zip(inquiry.zip_code)
+    if (
+        zip_state
+        and zip_state != inquiry.state
+        and settings.closed_reason(zip_state, inquiry.practice_area)
+    ):
+        return "closed"
     if inquiry.federal_or_maritime_worker:
         return "federal_worker"
     return None
@@ -210,7 +219,7 @@ def process_intake(
     if not plan.has_buyer:
         lead.status = LeadStatus.UNSERVICEABLE
         audit.record(db, lead.id, "unserviceable", reason="no eligible attorney for this lead")
-        outbox.enqueue(db, "email", emails.consumer_receipt(settings, lead))
+        outbox.enqueue(db, "email", emails.consumer_receipt(settings, lead), lead_id=lead.id)
         db.commit()
         return lead
 
@@ -220,6 +229,7 @@ def process_intake(
             db,
             "exo.create_lead",
             exo_sync.lead_payload(lead, settings.exo_sync_contact_details),
+            lead_id=lead.id,
         )
 
     created = _create_offers(db, settings, lead, plan, now)
@@ -238,7 +248,7 @@ def process_intake(
                 offers.notify_offer(db, settings, lead, offer)
         offers.close_line_up_if_full(db, settings, lead, now)
 
-    outbox.enqueue(db, "email", emails.consumer_receipt(settings, lead))
+    outbox.enqueue(db, "email", emails.consumer_receipt(settings, lead), lead_id=lead.id)
     db.commit()
     return lead
 

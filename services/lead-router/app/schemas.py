@@ -501,6 +501,11 @@ class BillingRunResult(BaseModel):
     period: str
     created: int
     skipped_existing: int
+    not_billed: list[str] = Field(
+        default_factory=list,
+        description="Monthly fees held back because the attorney can't receive leads "
+        "(license check or agreement); staff decide",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -535,6 +540,7 @@ class BidsView(BaseModel):
     firm: str
     plan: BillingPlan
     can_edit: bool = Field(description="False on a subscription: areas are set with staff")
+    blocked: str | None = Field(default=None, description="Why you get no leads right now")
     pricing_rule: str
     increment_cents: int
     max_bid_cents: int
@@ -561,6 +567,18 @@ class LicenseCheckIn(BaseModel):
         min_length=1,
         description='Bar number per state, as shown on the state bar site: {"IL": "6301234"}',
     )
+
+    @field_validator("license_numbers")
+    @classmethod
+    def _numbers(cls, value: dict[str, str]) -> dict[str, str]:
+        cleaned = {k.strip().upper(): v.strip() for k, v in value.items()}
+        bad = sorted(k for k in cleaned if k not in US_STATES)
+        if bad:
+            raise ValueError(f"not US state codes: {bad}")
+        blank = sorted(k for k, v in cleaned.items() if not v or len(v) > 40)
+        if blank:
+            raise ValueError(f"give the bar number for {blank} (up to 40 characters)")
+        return cleaned
 
 
 class AgreementIn(BaseModel):
@@ -604,6 +622,7 @@ class MarketBidder(BaseModel):
     name: str
     bid_cents: int
     plan: BillingPlan
+    blocked: str | None = Field(default=None, description="Why they get no leads right now")
     below_floor: bool = Field(description="Pays per lead but priced below the lowest bid: no leads")
 
 

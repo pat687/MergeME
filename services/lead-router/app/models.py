@@ -235,6 +235,10 @@ class OutboxMessage(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     kind: Mapped[str] = mapped_column(String(40))
     payload: Mapped[dict[str, Any]] = mapped_column(JSONField)
+    # The lead a message is about, so erasing or holding a lead reaches exactly its copies.
+    lead_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    # When the body was blanked (services/privacy.py); the row stays as a record it was sent.
+    payload_erased_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)

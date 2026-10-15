@@ -24,8 +24,14 @@
         <label>Type of legal matter<select name="practice_area" id="practice_area" required></select></label>
       </div>
       <p class="small" id="area_notice" hidden></p>
+        <fieldset id="federal_question" class="radios" hidden>
+          <legend>Are you a federal government employee, or a longshore, harbor or shipyard worker?</legend>
+          <label class="check"><input type="radio" name="federal_or_maritime_worker" value="no"> No</label>
+          <label class="check"><input type="radio" name="federal_or_maritime_worker" value="yes"> Yes</label>
+        </fieldset>
       <p class="small muted" id="responsible" hidden></p>
-      <p class="notice" id="availability" role="status" hidden></p>
+      <!-- Always rendered (only its text changes), so screen readers announce it. -->
+      <div id="availability" role="status" aria-live="polite"></div>
     </fieldset>
 
     <div id="details">
@@ -52,11 +58,6 @@
           <label class="check"><input type="checkbox" name="injured"> I was injured</label>
           <label class="check"><input type="checkbox" name="medical_treatment"> I received medical treatment</label>
         </div>
-        <fieldset id="federal_question" class="radios" hidden>
-          <legend>Are you a federal government employee, or a longshore, harbor or shipyard worker?</legend>
-          <label class="check"><input type="radio" name="federal_or_maritime_worker" value="no"> No</label>
-          <label class="check"><input type="radio" name="federal_or_maritime_worker" value="yes"> Yes</label>
-        </fieldset>
         <label class="check"><input type="checkbox" name="court_date_soon"> I have a court date coming up</label>
         <label class="check"><input type="checkbox" name="has_attorney"> I already have an attorney for this</label>
       </fieldset>
@@ -135,8 +136,14 @@
 
   // Ask only what this matter needs, and say up front when we can't take it, before
   // anyone types details we would not be allowed to keep.
+  let shownArea = "";
   function renderArea() {
     const a = area();
+    if (a !== shownArea) {
+      // A different matter: an earlier answer to the workers' comp question doesn't carry over.
+      for (const radio of form.querySelectorAll("[name=federal_or_maritime_worker]")) radio.checked = false;
+      shownArea = a;
+    }
     document.getElementById("injury_questions").hidden = !meta.injury_areas.includes(a);
     document.getElementById("federal_question").hidden = a !== "workers_comp";
     const notice = document.getElementById("area_notice");
@@ -161,8 +168,8 @@
     }
     if (closed) closed += " Your state or local bar association runs a lawyer referral service that can help.";
     availability.textContent = closed;
-    availability.hidden = !closed;
-    details.hidden = Boolean(closed) && form.federal_or_maritime_worker.value !== "yes";
+    availability.className = closed ? "notice" : "";
+    details.hidden = Boolean(closed);
     button.disabled = Boolean(closed);
   }
 
@@ -299,6 +306,7 @@
   try {
     await loadMeta();
     button.disabled = false;
+    renderArea();  // keeps it disabled if the state or matter already filled in is closed
   } catch {
     error.textContent = "The form couldn't load. Please check your connection and refresh the page.";
   }

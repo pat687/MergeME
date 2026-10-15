@@ -74,7 +74,11 @@ ADDED_COLUMNS = [
     ("attorneys", "license_verified_at", "TIMESTAMP"),
     ("attorneys", "agreement_version", "VARCHAR(40)"),
     ("attorneys", "agreement_accepted_at", "TIMESTAMP"),
+    ("outbox_messages", "lead_id", "VARCHAR(36)"),
+    ("outbox_messages", "payload_erased_at", "TIMESTAMP"),
 ]
+# Indexes for ADDED_COLUMNS (create_all adds them only to new tables).
+ADDED_INDEXES = [("ix_outbox_messages_lead_id", "outbox_messages", "lead_id")]
 
 
 def upgrade_schema(engine: Engine) -> None:
@@ -88,3 +92,6 @@ def upgrade_schema(engine: Engine) -> None:
                 continue
             if column not in {c["name"] for c in existing.get_columns(table)}:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {guard}{column} {sql_type}"))
+        for name, table, column in ADDED_INDEXES:
+            if existing.has_table(table):
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})"))

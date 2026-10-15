@@ -125,6 +125,12 @@ def main() -> None:
     if "personal_injury" not in meta["open"].get("IL", []):
         sys.exit("Illinois personal injury isn't open: set ROUTER_LAUNCH_STATES and "
                  "ROUTER_COUNSEL_CLEARED as in .env.example (demo values), then `make up`.")
+    unchecked = [a["name"] for a in call("GET", "/api/v1/admin/attorneys", admin=True)[1]
+                 if not a.get("license_verified_at")]
+    if unchecked:
+        print(f"{YELLOW}Note: no license check recorded for {', '.join(unchecked)}. Unless "
+              f"ROUTER_REQUIRE_LICENSE_VERIFICATION=false (as in .env.example), they get no "
+              f"leads and the demo's expectations will fail.{RESET}")
 
     step(1, "Five people send in the intake form",
          "Each one takes a different path through the system.")

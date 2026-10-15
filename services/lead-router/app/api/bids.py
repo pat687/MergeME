@@ -19,7 +19,7 @@ from app.db import utcnow
 from app.domain.types import BillingPlan
 from app.models import Attorney, BidChange, Territory
 from app.schemas import BidsUpdate, BidsView
-from app.services import links, market
+from app.services import links, market, offers
 
 router = APIRouter(prefix="/api/v1/bids", tags=["attorney bids"])
 
@@ -74,6 +74,7 @@ def _view(db: Session, settings: Settings, attorney: Attorney) -> BidsView:
         firm=attorney.firm,
         plan=attorney.plan,
         can_edit=attorney.plan != BillingPlan.SUBSCRIPTION,
+        blocked=offers.credentials_problem(settings, attorney, utcnow()),
         pricing_rule=pricing_rule(settings, attorney.plan),
         increment_cents=settings.bid_increment_cents,
         max_bid_cents=settings.max_bid_cents,

@@ -75,7 +75,14 @@ def _pays(attorney: Attorney) -> bool:
 def bid_board(db: Session, settings: Settings, me: Attorney, now: datetime) -> list[dict]:
     """One row per practice area: my bid, my place in line, a bid that would put me first,
     the lowest bid accepted, and what leads have sold for lately."""
-    others = [a for a in db.scalars(select(Attorney)).all() if competes_with(me, a)]
+    from app.services.offers import credentials_problem  # offers -> emails -> no cycle here
+
+    # Rivals who can't be lined up (no recent license check, agreement missing) don't count.
+    others = [
+        a
+        for a in db.scalars(select(Attorney)).all()
+        if competes_with(me, a) and not credentials_problem(settings, a, now)
+    ]
     owned = {
         t.practice_area for t in db.scalars(select(Territory).where(Territory.attorney_id == me.id))
     }
@@ -128,6 +135,8 @@ def bid_board(db: Session, settings: Settings, me: Attorney, now: datetime) -> l
 
 def overview(db: Session, settings: Settings, now: datetime) -> list[dict]:
     """The whole market, for the operations dashboard."""
+    from app.services.offers import credentials_problem
+
     attorneys = db.scalars(select(Attorney).where(Attorney.active)).all()
     sales = recent_sales(db, now)
     rows = []
@@ -139,6 +148,7 @@ def overview(db: Session, settings: Settings, now: datetime) -> list[dict]:
                     "name": a.name,
                     "bid_cents": a.bids_cents[area],
                     "plan": a.plan,
+                    "blocked": credentials_problem(settings, a, now),
                     "below_floor": _pays(a) and a.bids_cents[area] < settings.floor_for(area),
                 }
                 for a in attorneys

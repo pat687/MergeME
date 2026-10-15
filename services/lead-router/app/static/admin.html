@@ -240,7 +240,8 @@
     if (json === lastMarket || selecting) return;
     lastMarket = json;
     const bidder = (b) => `${b.name} ${b.plan === "subscription" ? "(subscriber)"
-      : money(b.bid_cents) + (b.below_floor ? " (below lowest bid: gets no leads)" : "")}`;
+      : money(b.bid_cents) + (b.below_floor ? " (below lowest bid: gets no leads)" : "")}`
+      + (b.blocked ? ` (no leads: ${b.blocked})` : "");
     fill(document.getElementById("market_rows"), areas.map((m) => h("tr", {},
       h("td", {}, m.label),
       h("td", {}, m.model === "ping_tree" ? "Auction" : "Set price"),

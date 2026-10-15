@@ -67,6 +67,11 @@ About 30 other states were not researched one by one. "Not flagged" does not mea
 Inquiries that can't be accepted are refused **before anything is stored**: the form asks
 for the state and type of matter first and says so straight away, and the server keeps
 nothing and sends nothing, only pointing the person to their bar's lawyer referral service.
+The ZIP code's own state must be open too, so typing an open state with a ZIP code from a
+closed one doesn't get through. If a state or matter is closed while leads from it are
+still on offer, they are withdrawn: nobody else is asked and nobody can accept.
+Outside demo mode, `ROUTER_COUNSEL_CLEARED` also needs `ROUTER_COUNSEL_APPROVAL_REF` (where
+counsel's written approval is filed), so the demo values can't slip into real use.
 
 ## 3. Rule → feature → proof
 
@@ -84,7 +89,7 @@ nothing and sends nothing, only pointing the person to their bar's lawyer referr
 | "Attorney advertising" label | Header tag and first words of the disclosure | [`static/intake.html`](../services/lead-router/app/static/intake.html) | n/a |
 | Responsible lawyer named where a state requires it | `ROUTER_RESPONSIBLE_ATTORNEYS` shows a per-state line on the form once the state is entered. **Counsel decides** whether and whom to name. | `intake.html` | n/a |
 | Attorney independence (Rule 5.4) | Attorneys decide to accept or pass on every lead; flags like "time-sensitive" are notes, never auto-rejections | `scoring._flags`, `offers.accept/decline` | `test_old_incident_gets_deadline_flag_but_is_not_rejected` |
-| **Only licensed attorneys** | No leads without a bar-license check recorded within `ROUTER_LICENSE_RECHECK_DAYS` (90), checked when the line-up is made, when each attorney's turn comes and at acceptance; staff record it with the bar numbers from each state bar's site | `offers.credentials_problem` | `test_attorneys_without_a_recent_license_check_get_no_leads`, `test_a_license_lapse_is_caught_when_the_attorneys_turn_comes` |
+| **Only licensed attorneys** | No leads without a bar-license check recorded within `ROUTER_LICENSE_RECHECK_DAYS` (90), checked when the line-up is made, when each attorney's turn comes and at acceptance; staff record it with the bar number for every state the attorney takes leads in. Monthly fees of attorneys who can't get leads are held back for staff to decide (`not_billed` in the billing run) | `offers.credentials_problem` | `test_attorneys_without_a_recent_license_check_get_no_leads`, `test_a_license_lapse_is_caught_when_the_attorneys_turn_comes` |
 | Attorneys agreed to the rules | Once `ROUTER_ATTORNEY_AGREEMENT_VERSION` is set, no leads until that version's acceptance is recorded | `offers.credentials_problem` | `test_once_published_the_agreement_must_be_accepted` |
 | Bankruptcy: 11 U.S.C. 528 statement; immigration: no notario impression | Shown on the form when those matters are chosen | `compliance.area_notices` | `test_area_notices_cover_immigration_and_bankruptcy` |
 | Federal and maritime workers' comp | Asked on the form; such claims are refused and pointed to the U.S. Department of Labor | `IntakeRequest`, `pipeline.refusal` | `test_federal_and_maritime_workers_comp_claims_are_not_taken` |

@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     counsel_cleared: list[str] = Field(default_factory=list)
     # Extra blocks: '{"NY": ["immigration"], "OR": ["*"]}'.
     blocked_areas_by_state: dict[str, list[str]] = Field(default_factory=dict)
+    # Where counsel's written approval for the clearances above is filed, e.g. "Smith LLP
+    # letter, 2026-11-02". Required outside demo mode when anything is cleared.
+    counsel_approval_ref: str | None = None
 
     # --- Attorneys --------------------------------------------------------------
     # An attorney gets no leads unless staff recorded a bar-license check this recently
@@ -183,6 +186,13 @@ class Settings(BaseSettings):
             {s for s in self.launch_states if s not in US_STATE_CODES}
             | {s for s in self.blocked_areas_by_state if s not in US_STATE_CODES}
             | {
+                f"{state}:{area}"
+                for state, areas in self.blocked_areas_by_state.items()
+                for area in areas
+                if area != "*" and area not in set(PracticeArea)
+            }
+            | {s for s in self.responsible_attorneys if s not in US_STATE_CODES}
+            | {
                 entry
                 for entry in self.counsel_cleared
                 if entry.split(":")[0] not in US_STATE_CODES
@@ -211,8 +221,17 @@ class Settings(BaseSettings):
 
         problems = []
         url = urlparse(self.public_base_url)
-        if url.scheme != "https" and url.hostname not in {"localhost", "127.0.0.1"}:
-            problems.append("ROUTER_PUBLIC_BASE_URL must start with https://")
+        # Links in emails go to people outside, so not even localhost will do.
+        if url.scheme != "https" or url.hostname in {"localhost", "127.0.0.1"}:
+            problems.append("ROUTER_PUBLIC_BASE_URL must be your public https:// address")
+        if self.uses_dev_secrets:
+            problems.append("set ROUTER_ADMIN_API_KEY and ROUTER_LINK_SIGNING_SECRET (make init)")
+        if self.counsel_cleared and not self.counsel_approval_ref:
+            problems.append(
+                "ROUTER_COUNSEL_CLEARED is set: record where counsel's written approval is "
+                "filed in ROUTER_COUNSEL_APPROVAL_REF (the demo values in .env.example are not "
+                "an approval)"
+            )
         if (self.smtp_host or "").lower() == "mailpit":
             problems.append("ROUTER_SMTP_HOST is the Mailpit test inbox; use a real mail server")
         if not self.require_license_verification:

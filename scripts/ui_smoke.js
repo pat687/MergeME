@@ -152,31 +152,36 @@ async function newFamilyLead() {
   // Intake form: says up front when a state or matter isn't accepted (before anyone
   // types details), asks injury questions and the separate health consent only where
   // they apply, and writes the typed phone number into the consent.
+  const meta = await (await fetch(`${BASE}/api/v1/meta`)).json();
+  // A state this stack doesn't accept, and one where injury matters are open.
+  const closedState = ["WY", "VT", "ND", "WA", "WI"].find((st) => !(st in meta.open));
+  const openState = Object.keys(meta.open).find((st) => meta.open[st].includes("personal_injury"));
   page = await open({ viewport: { width: 390, height: 844 } });
   await page.goto(`${BASE}/`);
   await page.waitForSelector("#submit:not([disabled])");
-  await page.fill("[name=state]", "WA");
+  await page.fill("[name=state]", closedState);
   await page.selectOption("#practice_area", "personal_injury");
   const closedForm = await page.evaluate(() => ({
     notice: document.getElementById("availability").textContent,
     detailsHidden: document.getElementById("details").hidden,
     submitDisabled: document.getElementById("submit").disabled,
   }));
-  await page.fill("[name=state]", "IL");
-  const injuryForm = await page.evaluate(() => ({
-    detailsHidden: document.getElementById("details").hidden,
-    injury: !document.getElementById("injury_questions").hidden,
-    sensitive: !document.getElementById("sensitive_wrap").hidden,
-  }));
+  await page.fill("[name=state]", openState);
+  // What a person actually sees, not just the hidden attribute.
+  const injuryForm = {
+    detailsHidden: !(await page.isVisible("#details")),
+    injury: await page.isVisible("#injury_questions"),
+    sensitive: await page.isVisible("#sensitive_wrap"),
+  };
   await page.selectOption("#practice_area", "family_law");
-  const familyForm = await page.evaluate(() => ({
-    injury: !document.getElementById("injury_questions").hidden,
-    sensitive: !document.getElementById("sensitive_wrap").hidden,
-  }));
+  const familyForm = {
+    injury: await page.isVisible("#injury_questions"),
+    sensitive: await page.isVisible("#sensitive_wrap"),
+  };
   await page.fill("[name=phone]", "312 555 0199");
   const consentShown = await page.textContent("#consent_text");
   check("intake says which states and matters it can't take, before details are typed",
-    /aren't accepting inquiries from WA/.test(closedForm.notice) && closedForm.detailsHidden
+    closedForm.notice.includes(`aren't accepting inquiries from ${closedState}`) && closedForm.detailsHidden
       && closedForm.submitDisabled && !injuryForm.detailsHidden,
     JSON.stringify(closedForm));
   check("injury questions and the health consent appear only for injury matters; consent names the number",
@@ -191,8 +196,9 @@ async function newFamilyLead() {
     rejected: document.querySelector("[data-fill=rejected]").textContent,
     email: document.querySelector("[data-fill=privacy_link]").textContent,
   }));
-  check("privacy policy fills in the real retention periods and contact", policy.rejected === "30"
-    && policy.email.includes("@"), JSON.stringify(policy));
+  check("privacy policy fills in the real retention periods and contact",
+    policy.rejected === String(meta.retention_days.rejected) && policy.email === meta.privacy_email,
+    JSON.stringify(policy));
 
   // Intake form: Enter before the form's settings load must not submit natively
   // (that would put the person's details in the page URL).

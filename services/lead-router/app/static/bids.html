@@ -66,6 +66,8 @@
     });
     fill(view,
       h("h2", { style: "margin-top:0" }, `${d.name}, ${d.firm}`),
+      d.blocked ? h("p", { class: "error", role: "alert" },
+        `You aren't receiving leads right now: ${d.blocked}. Please contact us.`) : null,
       h("p", { id: "bids_help" }, d.pricing_rule),
       h("p", { id: "message", class: message?.error ? "error" : "small", role: message?.error ? "alert" : null },
         message?.text ?? ""),

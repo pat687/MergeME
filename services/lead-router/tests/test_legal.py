@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from app.config import Settings
 from app.db import utcnow
 from app.domain import compliance
-from app.models import Attorney, AuditEvent, Lead, OutboxMessage
+from app.models import Attorney, AuditEvent, Lead, LedgerEntry, OutboxMessage
 from tests.conftest import ADMIN, LAUNCH, add_attorney, inquiry_data, token
 
 
@@ -101,11 +101,19 @@ def test_launching_a_restricted_state_needs_recorded_counsel_approval(state):
     Settings(_env_file=None, demo_mode=True, launch_states=[state], counsel_cleared=[state])
 
 
-def test_unknown_states_and_areas_in_the_launch_settings_are_refused():
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"launch_states": ["XX"]},
+        {"counsel_cleared": ["IL:cooking"]},
+        # A typo would otherwise leave the area open while the operator thinks it's off.
+        {"blocked_areas_by_state": {"IL": ["Immigration"]}},
+        {"responsible_attorneys": {"il": "Jane Doe"}},
+    ],
+)
+def test_unknown_states_and_areas_in_the_launch_settings_are_refused(bad):
     with pytest.raises(ValidationError, match="unknown state"):
-        Settings(_env_file=None, demo_mode=True, launch_states=["XX"])
-    with pytest.raises(ValidationError, match="unknown state"):
-        Settings(_env_file=None, demo_mode=True, counsel_cleared=["IL:cooking"])
+        Settings(_env_file=None, demo_mode=True, **bad)
 
 
 def test_production_refuses_unsafe_settings():
@@ -118,15 +126,29 @@ def test_production_refuses_unsafe_settings():
             require_license_verification=False,
         )
     text = str(err.value)
-    for problem in ("https", "Mailpit", "LICENSE_VERIFICATION", "LEGAL_ENTITY_NAME"):
+    for problem in ("https", "Mailpit", "LICENSE_VERIFICATION", "LEGAL_ENTITY_NAME", "make init"):
         assert problem in text
-    ok = Settings(
-        _env_file=None,
-        demo_mode=False,
-        public_base_url="https://leads.example.com",
-        legal_entity_name="Example Leads LLC",
-        postal_address="1 Main St, Chicago, IL 60601",
+    real = {
+        "_env_file": None,
+        "demo_mode": False,
+        "public_base_url": "https://leads.example.com",
+        "admin_api_key": "a" * 32,
+        "link_signing_secret": "s" * 32,
+        "legal_entity_name": "Example Leads LLC",
+        "postal_address": "1 Main St, Chicago, IL 60601",
+    }
+    with pytest.raises(ValidationError, match="https"):
+        Settings(**{**real, "public_base_url": "http://localhost:8000"})
+    # A demo clearance carried into production is caught: it needs a record of approval.
+    with pytest.raises(ValidationError, match="COUNSEL_APPROVAL_REF"):
+        Settings(**real, launch_states=["IL"], counsel_cleared=["IL:personal_injury"])
+    Settings(
+        **real,
+        launch_states=["IL"],
+        counsel_cleared=["IL:personal_injury"],
+        counsel_approval_ref="Example LLP letter, 2026-11-02",
     )
+    ok = Settings(**real)
     assert ok.operator == "Example Leads LLC, 1 Main St, Chicago, IL 60601"
     assert ok.operator in compliance.disclosure("X", ok.operator)
 
@@ -412,3 +434,135 @@ def test_the_retention_schedule_erases_what_is_past_its_time(client, db):
     # Nothing new is due a second time.
     again = client.post("/api/v1/admin/retention/run", headers=ADMIN).json()
     assert again["narrative"] == 0 and again["rejected"] == 0
+
+
+# --- Second review round ------------------------------------------------------
+def test_closing_a_state_stops_a_lead_already_on_offer(client, settings, db):
+    lead_id = client.post("/api/v1/intake", json=inquiry_data()).json()["lead_id"]
+    first = next(o for o in detail(client, lead_id)["offers"] if o["round"] == 1)
+    settings.launch_states = []  # e.g. counsel said stop, and the operator restarted
+    r = client.post(f"/api/v1/offers/{first['id']}/accept", json={"token": token(first["id"])})
+    assert r.status_code == 409 and "no longer available" in r.text
+    after = detail(client, lead_id)
+    assert after["status"] == "unsold"
+    assert {o["status"] for o in after["offers"]} == {"skipped"}
+    assert db.query(LedgerEntry).filter_by(lead_id=lead_id).count() == 0
+    view = client.get(
+        f"/api/v1/offers/{first['id']}", headers={"X-Offer-Token": token(first["id"])}
+    )
+    assert "withdrawn" in view.json()["notice"]
+
+
+def test_a_zip_code_from_a_closed_state_is_refused_whatever_state_is_typed(client, db):
+    before = lead_count(db)
+    kenosha = inquiry_data(  # a Wisconsin ZIP; Wisconsin isn't open
+        state="IL", zip_code="53140", practice_area="family_law", injured=None
+    )
+    assert client.post("/api/v1/intake", json=kenosha).json()["lead_id"] is None
+    assert lead_count(db) == before
+
+
+def test_erasing_one_inquiry_leaves_the_same_persons_other_inquiry_alone(client, db):
+    family = client.post(
+        "/api/v1/intake",
+        json=inquiry_data(practice_area="family_law", injured=None, email="josé@example.org"),
+    ).json()["lead_id"]
+    injury = client.post(
+        "/api/v1/intake", json=inquiry_data(email="josé@example.org", phone="(312) 555-0101")
+    ).json()["lead_id"]
+    client.post(
+        f"/api/v1/admin/leads/{family}/erase",
+        json={"level": "full", "reason": "deletion request"},
+        headers=ADMIN,
+    )
+    by_lead = {}
+    for message in db.query(OutboxMessage).all():
+        by_lead.setdefault(message.lead_id, []).append(message)
+    # Every copy about the erased inquiry is blank, even with a non-ASCII address ...
+    assert all(m.payload_erased_at for m in by_lead[family])
+    # ... and the other inquiry's emails still go out.
+    assert by_lead[injury] and not any(m.payload_erased_at for m in by_lead[injury])
+
+
+def test_a_legal_hold_keeps_the_sent_email_copies(client, db):
+    lead_id = client.post("/api/v1/intake", json=inquiry_data()).json()["lead_id"]
+    accept_first(client, lead_id)
+    client.post("/api/v1/admin/worker/run", headers=ADMIN)
+    client.post(
+        f"/api/v1/admin/leads/{lead_id}/legal-hold",
+        json={"on": True, "reason": "TCPA complaint"},
+        headers=ADMIN,
+    )
+    for message in db.query(OutboxMessage).filter(OutboxMessage.sent_at.is_not(None)):
+        message.sent_at = utcnow() - timedelta(days=30)
+    db.commit()
+    client.post("/api/v1/admin/retention/run", headers=ADMIN)
+    db.expire_all()
+    kept = db.query(OutboxMessage).filter_by(lead_id=lead_id).all()
+    assert kept and not any(m.payload_erased_at for m in kept)
+
+
+def test_old_email_bodies_keep_getting_erased_past_the_first_batch(client, db, monkeypatch):
+    from app.services import privacy
+
+    monkeypatch.setattr(privacy, "BATCH", 1)  # at most 5 emails per run
+    jordan = attorney_id(client, "Jordan Reyes")
+    for _ in range(7):
+        client.post(f"/api/v1/admin/attorneys/{jordan}/bid-link", headers=ADMIN)
+    client.post("/api/v1/admin/worker/run", headers=ADMIN)
+    for message in db.query(OutboxMessage).all():
+        message.sent_at = utcnow() - timedelta(days=30)
+    db.commit()
+    runs = [
+        client.post("/api/v1/admin/retention/run", headers=ADMIN).json()["sent_email"]
+        for _ in range(3)
+    ]
+    assert runs == [5, 2, 0]
+
+
+def test_monthly_fees_are_held_for_attorneys_who_cant_get_leads(client, db):
+    morgan = attorney_id(client, "Morgan Lee")  # subscriber
+    db.get(Attorney, morgan).license_verified_at = None
+    db.commit()
+    r = client.post("/api/v1/admin/billing/run", params={"period": "2026-10"}, headers=ADMIN).json()
+    assert any(line.startswith("Morgan Lee: subscription") for line in r["not_billed"])
+    charged = db.query(LedgerEntry).filter_by(attorney_id=morgan, kind="subscription").count()
+    assert charged == 0
+
+
+@pytest.mark.parametrize(
+    ("numbers", "message"),
+    [
+        ({"IL": "  "}, "give the bar number"),
+        ({"IL": "1", "XX": "2"}, "not US state codes"),
+        ({"IL": "1", "WI": "2"}, "doesn't take leads in"),
+    ],
+)
+def test_license_checks_need_a_real_number_for_each_state(client, numbers, message):
+    avery = attorney_id(client, "Avery Stone")
+    r = client.post(
+        f"/api/v1/admin/attorneys/{avery}/license-check",
+        json={"license_numbers": numbers},
+        headers=ADMIN,
+    )
+    assert r.status_code == 422 and message in r.text
+
+
+def test_blocked_rivals_dont_count_on_the_bid_page(client, db):
+    from tests.test_market import bid_page, board
+
+    jordan = attorney_id(client, "Jordan Reyes")
+    db.get(Attorney, jordan).license_verified_at = None
+    db.commit()
+    sam = attorney_id(client, "Sam Okafor")
+    assert board(client, sam)["personal_injury"]["competing_bidders"] == 1  # Avery only
+    assert "license" in bid_page(client, jordan)["blocked"]
+
+
+def test_the_receipt_masks_the_number_in_the_consent_copy(client, mailbox):
+    client.post("/api/v1/intake", json=inquiry_data())
+    client.post("/api/v1/admin/worker/run", headers=ADMIN)
+    receipt = next(m for m in mailbox if m["subject"].startswith("We received"))
+    assert "(***) ***-0142" in receipt["body"] and "555-0142" not in receipt["body"].replace(
+        "***-0142", ""
+    )

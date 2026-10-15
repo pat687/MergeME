@@ -585,11 +585,13 @@ def test_shared_max_attorneys_must_be_at_least_one():
 def test_older_databases_get_the_new_columns_at_startup(tmp_path):
     from sqlalchemy import inspect, text
 
-    from app.db import ADDED_COLUMNS, Base, make_engine, upgrade_schema
+    from app.db import ADDED_COLUMNS, ADDED_INDEXES, Base, make_engine, upgrade_schema
 
     engine = make_engine(f"sqlite:///{tmp_path / 'old.db'}")
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
+        for name, _table, _column in ADDED_INDEXES:
+            conn.execute(text(f"DROP INDEX {name}"))
         for table, column, _type in ADDED_COLUMNS:  # as an old release made them
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
         conn.execute(
@@ -603,6 +605,8 @@ def test_older_databases_get_the_new_columns_at_startup(tmp_path):
     upgrade_schema(engine)  # and again: safe to repeat
     for table, column, _type in ADDED_COLUMNS:
         assert column in {c["name"] for c in inspect(engine).get_columns(table)}
+    for name, table, _column in ADDED_INDEXES:
+        assert name in {i["name"] for i in inspect(engine).get_indexes(table)}
     with engine.connect() as conn:  # an existing attorney's bid link starts at version 0
         assert conn.execute(text("SELECT bids_link_version FROM attorneys")).scalar_one() == 0
 

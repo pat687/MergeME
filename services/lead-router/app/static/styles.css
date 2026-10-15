@@ -90,6 +90,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   outline-offset: 1px;
 }
 .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+/* Classes like label.check set display, which would otherwise beat the hidden attribute. */
+[hidden] { display: none !important; }
 fieldset.radios { margin: 8px 0; }
 fieldset.radios legend { font-weight: 400; font-size: 14px; margin-bottom: 4px; }
 .page-footer { margin: 16px 0; }

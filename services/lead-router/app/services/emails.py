@@ -89,6 +89,15 @@ def _privacy_footer(settings: Settings) -> str:
     )
 
 
+def _masked(lead: Lead) -> str:
+    """The consent as agreed, with all but the last 4 digits of the number hidden: the
+    address it goes to was typed in and hasn't been checked."""
+    text = lead.consent_text or ""
+    if not lead.phone or len(lead.phone) != 10:
+        return text
+    return text.replace(compliance.phone_display(lead.phone), f"(***) ***-{lead.phone[-4:]}")
+
+
 def consumer_receipt(settings: Settings, lead: Lead) -> dict[str, Any]:
     # No user-supplied text in this email: it goes to whatever address was typed in,
     # so it must never be usable to send someone else a message from our domain.
@@ -99,7 +108,7 @@ def consumer_receipt(settings: Settings, lead: Lead) -> dict[str, Any]:
 Reference number: {lead.id[:8].upper()}
 
 What you agreed to (form version {lead.consent_version}):
-"{lead.consent_text}"
+"{_masked(lead)}"
 
 {compliance.disclosure(settings.platform_name, settings.operator)}
 

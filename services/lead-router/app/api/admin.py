@@ -238,10 +238,16 @@ def record_license_check(
 ) -> Attorney:
     attorney = _get_or_404(db, Attorney, attorney_id)
     missing = sorted(set(attorney.bar_states) - set(body.license_numbers))
+    extra = sorted(set(body.license_numbers) - set(attorney.bar_states))
     if missing:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"give a license number for every state the attorney takes leads in: {missing}",
+        )
+    if extra:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"the attorney doesn't take leads in {extra}; update their bar states first",
         )
     attorney.license_numbers = body.license_numbers
     attorney.license_verified_at = utcnow()
@@ -379,9 +385,15 @@ def create_territory(body: TerritoryCreate, db: Session = Depends(get_db)) -> Te
     response_model=BillingRunResult,
     summary="Post monthly flat fees (safe to re-run)",
 )
-def run_billing(period: str = PERIOD, db: Session = Depends(get_db)) -> BillingRunResult:
-    created, skipped = billing.run_monthly_billing(db, period, utcnow())
-    return BillingRunResult(period=period, created=created, skipped_existing=skipped)
+def run_billing(
+    period: str = PERIOD,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> BillingRunResult:
+    created, skipped, held = billing.run_monthly_billing(db, settings, period, utcnow())
+    return BillingRunResult(
+        period=period, created=created, skipped_existing=skipped, not_billed=held
+    )
 
 
 @router.get("/attorneys/{attorney_id}/statement", response_model=Statement)

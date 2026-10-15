@@ -170,7 +170,8 @@ The tools (all need the admin key; try them at `/docs`):
 | Run the retention schedule now | `POST /api/v1/admin/retention/run` (the worker also runs it every 10 minutes) |
 
 Erasing a lead still on offer withdraws it, and attorneys who received the contact details
-are emailed a request to delete them. Erasing can't reach copies outside the router: backups
+are emailed a request to delete them. Only that lead's emails are blanked, never another
+inquiry's from the same person, and a legal hold also keeps the lead's sent emails. Erasing can't reach copies outside the router: backups
 (they age out), attorneys' own mailboxes, and eXo if `ROUTER_EXO_SYNC_CONTACT_DETAILS=true`.
 
 ## Attorneys: license checks and the agreement
