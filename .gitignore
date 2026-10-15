@@ -1,0 +1,19 @@
+# Secrets and local data
+.env
+.cache/
+backups/
+*.db
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+build/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

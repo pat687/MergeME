@@ -1,0 +1,241 @@
+# =============================================================================
+#  Barrgo AI Stack: self-hosted workspace (eXo Platform) + legal lead router
+# =============================================================================
+#
+#  Two ways to run it:
+#
+#    make up        Lead router only (about 1 GB RAM). Starts in seconds.
+#                   - Intake form ........ http://localhost:8000
+#                   - Staff dashboard .... http://localhost:8000/admin
+#                   - API docs ........... http://localhost:8000/docs
+#                   - Test inbox ......... http://localhost:8025   (Mailpit)
+#
+#    make up-full   Everything above PLUS the eXo Platform workspace that
+#                   replaces SharePoint (needs about 10 GB RAM, first start
+#                   takes several minutes).
+#                   - eXo workspace ...... http://exoapp.local
+#                     (add "127.0.0.1 exoapp.local" to your hosts file)
+#
+#  Secrets come from .env. Run `make init` once to create it with random values.
+# =============================================================================
+
+name: barrgo
+
+x-router-env: &router-env
+  ROUTER_DATABASE_URL: postgresql+psycopg://router:${ROUTER_DB_PASSWORD:?run make init}@router-db:5432/router
+  ROUTER_ADMIN_API_KEY: ${ROUTER_ADMIN_API_KEY:?run make init}
+  ROUTER_LINK_SIGNING_SECRET: ${ROUTER_LINK_SIGNING_SECRET:?run make init}
+  ROUTER_PUBLIC_BASE_URL: ${ROUTER_PUBLIC_BASE_URL:-http://localhost:8000}
+  ROUTER_DEMO_MODE: ${ROUTER_DEMO_MODE:-false}
+  ROUTER_EMBEDDED_WORKER: "false"
+  ROUTER_SMTP_HOST: ${ROUTER_SMTP_HOST:-mailpit}
+  ROUTER_SMTP_PORT: ${ROUTER_SMTP_PORT:-1025}
+  ROUTER_PING_OFFER_TTL_SECONDS: ${ROUTER_PING_OFFER_TTL_SECONDS:-90}
+  ROUTER_SHARED_OFFER_TTL_SECONDS: ${ROUTER_SHARED_OFFER_TTL_SECONDS:-900}
+  ROUTER_EXO_SYNC_ENABLED: ${ROUTER_EXO_SYNC_ENABLED:-false}
+  ROUTER_EXO_BASE_URL: http://exo:8080
+  ROUTER_EXO_LEADCAPTURE_TOKEN: ${ROUTER_EXO_LEADCAPTURE_TOKEN:-}
+  ROUTER_EXO_USERNAME: ${ROUTER_EXO_USERNAME:-}
+  ROUTER_EXO_PASSWORD: ${ROUTER_EXO_PASSWORD:-}
+  # Every other setting in app/config.py. Empty means "use the default" (see .env.example).
+  ROUTER_DISTRIBUTION_POLICY: ${ROUTER_DISTRIBUTION_POLICY:-}
+  ROUTER_FLOOR_PRICE_CENTS: ${ROUTER_FLOOR_PRICE_CENTS:-}
+  ROUTER_SHARED_MAX_ATTORNEYS: ${ROUTER_SHARED_MAX_ATTORNEYS:-}
+  ROUTER_DUPLICATE_WINDOW_DAYS: ${ROUTER_DUPLICATE_WINDOW_DAYS:-}
+  ROUTER_BUSINESS_TIMEZONE: ${ROUTER_BUSINESS_TIMEZONE:-}
+  ROUTER_INTAKE_RATE_LIMIT_PER_MINUTE: ${ROUTER_INTAKE_RATE_LIMIT_PER_MINUTE:-}
+  ROUTER_OUTBOX_MAX_ATTEMPTS: ${ROUTER_OUTBOX_MAX_ATTEMPTS:-}
+  ROUTER_OUTBOX_TIME_BUDGET_SECONDS: ${ROUTER_OUTBOX_TIME_BUDGET_SECONDS:-}
+  ROUTER_WORKER_INTERVAL_SECONDS: ${ROUTER_WORKER_INTERVAL_SECONDS:-}
+  ROUTER_SMTP_FROM: ${ROUTER_SMTP_FROM:-}
+  ROUTER_SMTP_USERNAME: ${ROUTER_SMTP_USERNAME:-}
+  ROUTER_SMTP_PASSWORD: ${ROUTER_SMTP_PASSWORD:-}
+  ROUTER_SMTP_STARTTLS: ${ROUTER_SMTP_STARTTLS:-}
+  ROUTER_PLATFORM_NAME: ${ROUTER_PLATFORM_NAME:-}
+  ROUTER_DISCLOSURE_VERSION: ${ROUTER_DISCLOSURE_VERSION:-}
+  # Only these addresses may set X-Forwarded-For (it becomes the consent IP on file).
+  # Nothing sits in front of the router by default, so trust no one but localhost.
+  FORWARDED_ALLOW_IPS: ${ROUTER_TRUSTED_PROXY_IPS:-127.0.0.1}
+
+services:
+  # ---------------------------------------------------------------------------
+  # Lead router (always on)
+  # ---------------------------------------------------------------------------
+  lead-router:
+    build: ./services/lead-router
+    image: barrgo/lead-router:1.0.0
+    environment: *router-env
+    ports:
+      - "${ROUTER_HTTP_PORT:-8000}:8000"
+    depends_on:
+      router-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  lead-worker:
+    # Same image as the API, different job: expires offers and sends the outbox.
+    build: ./services/lead-router
+    image: barrgo/lead-router:1.0.0
+    command: ["python", "-m", "app.worker"]
+    environment: *router-env
+    depends_on:
+      lead-router:
+        condition: service_healthy
+    healthcheck:
+      # Healthy only while the worker keeps finishing cycles (it touches a heartbeat file).
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  router-db:
+    image: postgres:16.15
+    environment:
+      POSTGRES_DB: router
+      POSTGRES_USER: router
+      POSTGRES_PASSWORD: ${ROUTER_DB_PASSWORD:?run make init}
+    volumes:
+      - router_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U router -d router"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  mailpit:
+    # A fake inbox for local testing: every email the router sends shows up at :8025.
+    image: axllent/mailpit:v1.31.2
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # eXo Platform workspace: the SharePoint replacement (profile "exo")
+  # Service layout follows eXo's official compose file (github.com/exo-docker/exo-community).
+  # ---------------------------------------------------------------------------
+  exo-proxy:
+    profiles: ["exo"]
+    image: nginx:1.30.2-alpine
+    environment:
+      EXO_HTTP_PORT: ${EXO_HTTP_PORT:-80}
+    ports:
+      # Same port inside and out, so eXo <-> ONLYOFFICE calls via exoapp.local:<port> work.
+      - "${EXO_HTTP_PORT:-80}:${EXO_HTTP_PORT:-80}"
+    volumes:
+      - ./infra/nginx/exo.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/templates:/etc/nginx/templates:ro
+    depends_on:
+      - exo
+      - onlyoffice
+    networks:
+      default:
+        aliases:
+          - ${EXO_PROXY_VHOST:-exoapp.local}
+    restart: unless-stopped
+
+  exo:
+    profiles: ["exo"]
+    image: ${EXO_IMAGE:-exoplatform/exo-community:7.2.0}
+    environment:
+      EXO_PROXY_VHOST: ${EXO_PROXY_VHOST:-exoapp.local}
+      EXO_PROXY_PORT: ${EXO_HTTP_PORT:-80}
+      EXO_PROXY_SSL: "false"
+      EXO_DB_TYPE: mysql
+      EXO_DB_HOST: exo-db
+      EXO_DB_NAME: exo
+      EXO_DB_USER: exo
+      EXO_DB_PASSWORD: ${EXO_DB_PASSWORD:?run make init}
+      EXO_ES_HOST: exo-search
+      EXO_JVM_SIZE_MAX: ${EXO_JVM_SIZE_MAX:-3g}
+      EXO_MAIL_SMTP_HOST: mailpit
+      EXO_MAIL_SMTP_PORT: 1025
+      EXO_MAIL_FROM: workspace@barrgo.local
+      JAVA_OPTS: >-
+        -Donlyoffice.documentserver.host=${EXO_PUBLIC_HOST:-exoapp.local}
+        -Donlyoffice.documentserver.schema=http
+        -Donlyoffice.documentserver.allowedhosts=localhost,${EXO_PROXY_VHOST:-exoapp.local}
+        -Donlyoffice.documentserver.accessOnly=false
+        -Donlyoffice.documentserver.secret=${ONLYOFFICE_JWT_SECRET:?run make init}
+    volumes:
+      - exo_data:/srv/exo
+      - exo_codec:/etc/exo/codec
+      - exo_logs:/var/log/exo
+    depends_on:
+      exo-db:
+        condition: service_healthy
+      exo-search:
+        # eXo gives up on search after a 20s timeout, so wait until it's actually healthy.
+        condition: service_healthy
+      onlyoffice:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/portal/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10m
+    restart: unless-stopped
+
+  exo-db:
+    profiles: ["exo"]
+    image: mysql:8.4.9
+    environment:
+      MYSQL_ROOT_PASSWORD: ${EXO_DB_ROOT_PASSWORD:?run make init}
+      MYSQL_DATABASE: exo
+      MYSQL_USER: exo
+      MYSQL_PASSWORD: ${EXO_DB_PASSWORD:?run make init}
+    volumes:
+      - exo_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  exo-search:
+    profiles: ["exo"]
+    image: elasticsearch:8.18.8
+    environment:
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+      node.name: exo
+      cluster.name: exo
+      discovery.type: single-node
+      network.host: 0.0.0.0
+      xpack.security.enabled: "false"
+      # Local stack only: by default Elasticsearch stops accepting data when the disk is
+      # over 90% full, which silently breaks eXo on a busy laptop. Remove in production.
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+    volumes:
+      - exo_search_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  onlyoffice:
+    # Edit Word/Excel/PowerPoint files in the browser, inside eXo (replaces Office Online).
+    profiles: ["exo"]
+    image: onlyoffice/documentserver:9.4
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:?run make init}
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+    restart: unless-stopped
+
+volumes:
+  router_db_data:
+  exo_data:
+  exo_codec:
+  exo_logs:
+  exo_db_data:
+  exo_search_data:
+  onlyoffice_data:

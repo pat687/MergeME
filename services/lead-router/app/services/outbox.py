@@ -1,0 +1,92 @@
+"""The outbox: a to-do list of messages, saved in the database, sent by a worker.
+
+Why not just send the email right away? If the email server is down, or the
+request crashes halfway, we'd either lose the message or send one about a
+change that never got saved. Writing the message into the same database
+transaction as the change, then sending it afterwards with retries, avoids
+both problems. This is the "transactional outbox" pattern.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from collections.abc import Callable
+from datetime import datetime, timedelta
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.db import utcnow
+from app.models import OutboxMessage
+
+log = logging.getLogger(__name__)
+
+Handler = Callable[[dict[str, Any]], None]
+
+
+def enqueue(db: Session, kind: str, payload: dict[str, Any]) -> None:
+    db.add(OutboxMessage(kind=kind, payload=payload, next_attempt_at=utcnow()))
+
+
+def backoff(attempts: int) -> timedelta:
+    """10s, 20s, 40s, 80s... capped at 5 minutes."""
+    return timedelta(seconds=min(300, 5 * 2**attempts))
+
+
+def deliver_due(
+    session_factory: sessionmaker,
+    handlers: dict[str, Handler],
+    *,
+    now: datetime,
+    max_attempts: int,
+    batch_size: int = 50,
+    time_budget_seconds: float | None = None,
+    kinds: list[str] | None = None,
+) -> int:
+    """Send what's due. Returns how many messages were delivered.
+
+    With a time budget, stop starting new sends once it's used up; the rest wait
+    for the next cycle. That keeps a slow mail or eXo server from holding up the
+    worker's other job, timing out offers. `kinds` limits the pass to some message
+    kinds, so a slow eXo can't use up the time meant for emails.
+    """
+    delivered = 0
+    deadline = None if time_budget_seconds is None else time.monotonic() + time_budget_seconds
+    with session_factory() as db:
+        stmt = select(OutboxMessage).where(
+            OutboxMessage.sent_at.is_(None),
+            OutboxMessage.failed.is_(False),
+            OutboxMessage.next_attempt_at <= now,
+        )
+        if kinds is not None:
+            stmt = stmt.where(OutboxMessage.kind.in_(kinds))
+        due = db.scalars(
+            stmt.order_by(OutboxMessage.id)
+            .limit(batch_size)
+            # On Postgres, two workers never grab the same message.
+            .with_for_update(skip_locked=True)
+        ).all()
+
+        for msg in due:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            try:
+                handler = handlers.get(msg.kind)
+                if handler is None:
+                    raise LookupError(f"no handler registered for {msg.kind!r}")
+                handler(msg.payload)
+                msg.sent_at = now
+                delivered += 1
+            except Exception as exc:
+                msg.attempts += 1
+                msg.last_error = f"{type(exc).__name__}: {exc}"[:2000]
+                if msg.attempts >= max_attempts:
+                    msg.failed = True
+                    log.error("outbox message %s gave up after %s tries", msg.id, msg.attempts)
+                else:
+                    msg.next_attempt_at = now + backoff(msg.attempts)
+                    log.warning("outbox message %s failed, will retry: %s", msg.id, exc)
+        db.commit()
+    return delivered

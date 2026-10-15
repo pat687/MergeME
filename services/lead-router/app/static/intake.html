@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Find an Attorney</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main class="wrap">
+  <header class="top">
+    <h1 id="platform">Legal Connect</h1>
+    <span class="tag">Attorney advertising</span>
+  </header>
+  <p class="muted">Tell us what happened. Participating attorneys who handle this kind of matter in your area can contact you.</p>
+  <p class="notice" id="disclosure"></p>
+
+  <form id="intake" class="card" novalidate>
+    <fieldset>
+      <legend>About you</legend>
+      <div class="grid">
+        <label>First name<input name="first_name" autocomplete="given-name" required></label>
+        <label>Last name<input name="last_name" autocomplete="family-name" required></label>
+        <label>Email<input name="email" type="email" autocomplete="email" required></label>
+        <label>Phone<input name="phone" type="tel" autocomplete="tel" placeholder="(312) 555-0142" required></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Where you are</legend>
+      <div class="grid">
+        <label>ZIP code<input name="zip_code" inputmode="numeric" maxlength="10" autocomplete="postal-code" required></label>
+        <label>State<input name="state" maxlength="2" placeholder="IL" required></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Your matter</legend>
+      <div class="grid">
+        <label>Type of legal matter<select name="practice_area" id="practice_area" required></select></label>
+        <label>When did it happen? (optional)<input name="incident_date" type="date"></label>
+      </div>
+      <label style="margin-top:12px">What happened?
+        <textarea name="description" minlength="10" maxlength="2000" required aria-describedby="description_hint"
+          placeholder="A few sentences in your own words."></textarea>
+      </label>
+      <p class="small muted" id="description_hint">Attorneys read this before they contact you, so please leave out your name, phone, email, address and any account numbers. We ask for those above.</p>
+      <label class="check"><input type="checkbox" name="injured"> I was injured</label>
+      <label class="check"><input type="checkbox" name="medical_treatment"> I received medical treatment</label>
+      <label class="check"><input type="checkbox" name="court_date_soon"> I have a court date coming up</label>
+      <label class="check"><input type="checkbox" name="has_attorney"> I already have an attorney for this</label>
+    </fieldset>
+
+    <!-- Honeypot: hidden from people, irresistible to bots. -->
+    <div class="hp" aria-hidden="true">
+      <label>Website<input name="website" tabindex="-1" autocomplete="off"></label>
+    </div>
+
+    <fieldset>
+      <legend>Consent</legend>
+      <label class="check"><input type="checkbox" name="consent" required> <span id="consent_text"></span></label>
+    </fieldset>
+
+    <p class="error" id="error" role="alert"></p>
+    <button type="submit" id="submit" disabled>Send my inquiry</button>
+  </form>
+
+  <section class="card" id="result" hidden aria-live="polite">
+    <h2 style="margin-top:0" tabindex="-1">Thank you</h2>
+    <p id="result_message"></p>
+    <p class="small muted">Reference number: <span class="mono" id="result_ref"></span></p>
+  </section>
+</main>
+
+<script type="module">
+  import { api, h } from "/static/common.js";
+
+  const form = document.getElementById("intake");
+  const button = document.getElementById("submit");
+  const error = document.getElementById("error");
+  let meta = null;
+
+  // Plain-English messages per field instead of raw validation text.
+  const FRIENDLY = {
+    first_name: "Please enter your first name (letters only).",
+    last_name: "Please enter your last name (letters only).",
+    email: "Please enter a valid email address.",
+    phone: "Please enter a 10-digit US phone number.",
+    zip_code: "Please enter a 5-digit ZIP code.",
+    state: "Please enter a two-letter state code, like IL.",
+    practice_area: "Please choose the type of legal matter.",
+    description: "Please describe what happened in a sentence or two.",
+    incident_date: "Please enter a valid date.",
+  };
+
+  function clearFieldErrors() {
+    form.querySelectorAll(".field-error").forEach((el) => el.remove());
+    form.querySelectorAll("[aria-invalid]").forEach((el) => {
+      el.removeAttribute("aria-invalid");
+      if (el.dataset.describedby) el.setAttribute("aria-describedby", el.dataset.describedby);
+      else el.removeAttribute("aria-describedby");
+    });
+  }
+
+  function showFieldErrors(fields) {
+    let first = null;
+    for (const f of fields) {
+      const name = f.loc[f.loc.length - 1];
+      const input = form.elements[name];
+      if (!input || input.getAttribute("aria-invalid")) continue;
+      const id = `error_${name}`;
+      input.dataset.describedby = input.getAttribute("aria-describedby") || "";
+      input.setAttribute("aria-invalid", "true");
+      input.setAttribute("aria-describedby", `${id} ${input.dataset.describedby}`.trim());
+      (input.closest("label") || input.parentElement)
+        .append(h("span", { class: "field-error", id }, FRIENDLY[name] || "Please check this field."));
+      first ??= input;
+    }
+    first?.focus();
+    return Boolean(first);
+  }
+
+  // Attached before anything else loads, so the browser can never fall back to a
+  // plain form submit that would put someone's details in the page URL.
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!meta) return;
+    error.textContent = "";
+    clearFieldErrors();
+    const data = Object.fromEntries(new FormData(form));
+    const payload = {
+      ...data,
+      incident_date: data.incident_date || null,
+      injured: form.injured.checked,
+      medical_treatment: form.medical_treatment.checked,
+      court_date_soon: form.court_date_soon.checked,
+      has_attorney: form.has_attorney.checked,
+      consent: form.consent.checked,
+      consent_version: meta.consent_version,
+      utm_source: new URLSearchParams(location.search).get("utm_source"),
+    };
+    if (!payload.consent) {
+      error.textContent = "Please tick the consent box so attorneys are allowed to contact you.";
+      form.consent.focus();
+      return;
+    }
+    button.disabled = true;
+    try {
+      const res = await api("/api/v1/intake", { method: "POST", body: payload });
+      if (res.status === "rejected") {
+        if (res.reload_form) {
+          // The consent wording changed while the page was open: show the new wording
+          // and ask them to tick the box again.
+          await loadMeta().catch(() => {});
+          form.consent.checked = false;
+          form.consent.focus();
+        }
+        error.textContent = res.message;
+        return;
+      }
+      document.getElementById("result_message").textContent = res.message;
+      document.getElementById("result_ref").textContent = res.lead_id.slice(0, 8).toUpperCase();
+      form.hidden = true;
+      const result = document.getElementById("result");
+      result.hidden = false;
+      result.querySelector("h2").focus();
+    } catch (err) {
+      const shown = err.status === 422 && showFieldErrors(err.fields);
+      error.textContent = shown ? "Please fix the highlighted fields." : err.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  // Loads (or reloads) the wording, so what the person agrees to is always current.
+  async function loadMeta() {
+    meta = await api("/api/v1/meta");
+    document.title = `Find an Attorney - ${meta.platform_name}`;
+    document.getElementById("platform").textContent = meta.platform_name;
+    document.getElementById("disclosure").textContent = meta.disclosure;
+    document.getElementById("consent_text").textContent = meta.consent_text;
+    const select = document.getElementById("practice_area");
+    const chosen = select.value;
+    select.replaceChildren(h("option", { value: "" }, "Choose one..."));
+    for (const area of meta.practice_areas) select.append(h("option", { value: area.value }, area.label));
+    select.value = chosen;
+  }
+
+  try {
+    await loadMeta();
+    button.disabled = false;
+  } catch {
+    error.textContent = "The form couldn't load. Please check your connection and refresh the page.";
+  }
+</script>
+</body>
+</html>

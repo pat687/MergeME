@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lead Operations</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main class="wrap wide">
+  <header class="top">
+    <h1>Lead operations</h1>
+    <span class="tag">Staff only</span>
+  </header>
+
+  <section class="card" id="login">
+    <form id="login_form" class="toolbar">
+      <label>Admin key<input id="key" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Open dashboard</button>
+    </form>
+    <p class="error" id="login_error" role="alert"></p>
+  </section>
+
+  <div id="app" hidden>
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card toolbar">
+      <label>Show
+        <select id="status_filter">
+          <option value="">All leads</option>
+          <option value="offered">Offered</option>
+          <option value="assigned">Assigned</option>
+          <option value="unsold">Unsold</option>
+          <option value="unserviceable">Unserviceable</option>
+          <option value="rejected">Rejected</option>
+        </select>
+      </label>
+      <button class="secondary" id="run_worker" title="Expire overdue offers and send queued email now">Run worker now</button>
+      <button class="secondary" id="run_billing" title="Post this month's subscription and territory fees (safe to repeat)">Run monthly billing</button>
+      <a href="/docs" class="small">API docs</a>
+      <span class="small muted" id="flash" aria-live="polite"></span>
+    </div>
+
+    <div class="layout">
+      <section class="card">
+        <h2 style="margin-top:0">Leads</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Received</th><th>Status</th><th>Area</th><th>ZIP</th><th>Tier</th><th>Model</th><th>Attorney</th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="card" id="detail"><p class="muted">Select a lead to see every decision made about it.</p></section>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+  import { api, fill, h, label, money, pill, when } from "/static/common.js";
+
+  let key = sessionStorage.getItem("router_admin_key") || "";
+  let attorneys = {};
+  let selected = null;
+  const admin = (path, opts = {}) => api(`/api/v1/admin${path}`, { ...opts, headers: { "X-Admin-Key": key } });
+
+  // Turn an audit entry's details into readable lines instead of raw JSON.
+  function describe(detail) {
+    return Object.entries(detail).map(([k, v]) => {
+      if (Array.isArray(v)) return `${label(k)}: ${v.length ? v.join(", ") : "none"}`;
+      if (v && typeof v === "object") {
+        const rows = Object.entries(v).map(([name, why]) => `  - ${name}: ${why}`);
+        return `${label(k)}:${rows.length ? "\n" + rows.join("\n") : " none"}`;
+      }
+      return `${label(k)}: ${k.endsWith("_cents") ? money(v) : v}`;
+    }).join("\n");
+  }
+
+  function kpi(k, v) {
+    return h("div", { class: "kpi" }, h("div", { class: "k" }, k), h("div", { class: "v" }, v));
+  }
+
+  async function refresh() {
+    const filter = document.getElementById("status_filter").value;
+    const [stats, leads] = await Promise.all([
+      admin("/stats"),
+      admin(`/leads?limit=100${filter ? `&status=${filter}` : ""}`),
+    ]);
+    const pct = stats.sell_through_rate === null ? "-" : `${Math.round(stats.sell_through_rate * 100)}%`;
+    fill(document.getElementById("kpis"),
+      kpi("Leads", stats.total_leads),
+      kpi("Assigned", stats.leads_by_status.assigned ?? 0),
+      kpi("Sell-through", pct),
+      kpi("Avg time to claim", stats.avg_seconds_to_claim === null ? "-" : `${stats.avg_seconds_to_claim}s`),
+      kpi(`Revenue ${stats.billing_period}`, money(stats.revenue_cents_this_month).replace(" (included)", "")),
+      kpi("Email queue", `${stats.outbox_pending} pending / ${stats.outbox_failed} failed`),
+    );
+    // Rows are rebuilt on every refresh, so remember which one had keyboard focus.
+    const focusedId = document.activeElement?.dataset?.id;
+    fill(document.getElementById("rows"), leads.map((l) =>
+      h("tr", {
+        class: l.id === selected ? "selected" : "",
+        "data-id": l.id,
+        tabindex: "0",
+        role: "button",
+        "aria-label": `Open ${label(l.status)} ${label(l.practice_area)} lead, ZIP ${l.zip_code}`,
+        onclick: () => showLead(l.id),
+        onkeydown: (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            showLead(l.id);
+          }
+        },
+      },
+        h("td", {}, when(l.created_at)),
+        h("td", {}, pill(l.status)),
+        h("td", {}, label(l.practice_area)),
+        h("td", { class: "mono" }, l.zip_code),
+        h("td", {}, l.tier ? pill(l.tier) : "-"),
+        h("td", {}, l.distribution_model ? label(l.distribution_model) : "-"),
+        h("td", {}, attorneys[l.assigned_attorney_id] ?? "-"))));
+    if (focusedId) document.querySelector(`#rows tr[data-id="${focusedId}"]`)?.focus();
+    if (selected) showLead(selected, { scroll: false, background: true });
+  }
+
+  function markSelected() {
+    document.querySelectorAll("#rows tr").forEach((tr) => tr.classList.toggle("selected", tr.dataset.id === selected));
+  }
+
+  let detailSeq = 0;
+  let lastDetail = "";
+
+  async function showLead(id, { scroll = true, background = false } = {}) {
+    selected = id;
+    markSelected();
+    const seq = ++detailSeq;
+    const d = await admin(`/leads/${id}`);
+    if (seq !== detailSeq || id !== selected) return;  // a newer click superseded this response
+    const panel = document.getElementById("detail");
+    const json = JSON.stringify(d);
+    if (background) {
+      // The 5-second refresh shouldn't wipe what someone is reading, selecting or focusing.
+      const selection = window.getSelection();
+      const busy = panel.contains(document.activeElement)
+        || (selection && !selection.isCollapsed && panel.contains(selection.anchorNode));
+      if (json === lastDetail || busy) return;
+    }
+    lastDetail = json;
+    const factors = d.score_breakdown.map((f) => h("div", { class: "factor" },
+      h("div", {}, h("div", {}, f.reason),
+        h("div", { class: `bar ${f.points < 0 ? "neg" : ""}`, style: `width:${Math.min(100, Math.abs(f.points) * 3)}%` })),
+      h("div", { class: "mono", style: "text-align:right" }, f.points > 0 ? `+${f.points}` : f.points)));
+    fill(panel,
+      h("h2", { style: "margin-top:0" }, `${d.first_name} ${d.last_name}`),
+      h("div", { class: "toolbar" }, pill(d.status), d.tier ? pill(d.tier) : null,
+        h("span", { class: "small muted" }, `${label(d.practice_area)} · ${d.zip_code}, ${d.state}`)),
+      d.rejection_reasons.length ? h("p", { class: "error" }, `Rejected: ${d.rejection_reasons.join("; ")}`) : null,
+      d.score_breakdown.length ? [h("h3", {}, `Score ${d.score}/100, and why`), ...factors] : null,
+      d.offers.length ? [h("h3", {}, `Offers (${label(d.distribution_model)})`),
+        h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, h("th", {}, "#"), h("th", {}, "Attorney"), h("th", {}, "Status"), h("th", {}, "Price"), h("th", {}, ""))),
+          h("tbody", {}, d.offers.map((o) => h("tr", {},
+            h("td", {}, o.round), h("td", {}, attorneys[o.attorney_id] ?? o.attorney_id), h("td", {}, pill(o.status)),
+            h("td", {}, money(o.price_cents)),
+            h("td", {}, o.link ? h("a", { href: o.link, target: "_blank", rel: "noopener" }, "open as attorney") : ""))))))] : null,
+      h("h3", {}, "Decision trail"),
+      h("ol", { class: "timeline" }, d.audit.map((a) => h("li", {},
+        h("div", {}, h("strong", {}, label(a.event)), " ", h("span", { class: "when" }, when(a.at))),
+        Object.keys(a.detail).length ? h("pre", { class: "detail" }, describe(a.detail)) : null))),
+    );
+    if (scroll && window.innerWidth < 900) panel.scrollIntoView({ behavior: "smooth" });
+  }
+
+  async function start() {
+    try {
+      const list = await admin("/attorneys");
+      attorneys = Object.fromEntries(list.map((a) => [a.id, a.name]));
+      sessionStorage.setItem("router_admin_key", key);
+      document.getElementById("login").hidden = true;
+      document.getElementById("app").hidden = false;
+      await refresh();
+      setInterval(() => refresh().catch(() => {}), 5000);
+    } catch (err) {
+      document.getElementById("login_error").textContent = err.message;
+    }
+  }
+
+  function flash(text) {
+    document.getElementById("flash").textContent = text;
+    setTimeout(() => (document.getElementById("flash").textContent = ""), 4000);
+  }
+
+  document.getElementById("login_form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    key = document.getElementById("key").value;
+    start();
+  });
+  document.getElementById("status_filter").addEventListener("change", refresh);
+  document.getElementById("run_worker").addEventListener("click", async () => {
+    const r = await admin("/worker/run", { method: "POST" });
+    flash(`Expired ${r.expired} offer(s), sent ${r.delivered} message(s).`);
+    refresh();
+  });
+  document.getElementById("run_billing").addEventListener("click", async () => {
+    const period = new Date().toISOString().slice(0, 7);
+    const r = await admin(`/billing/run?period=${period}`, { method: "POST" });
+    flash(`Billing ${r.period}: ${r.created} new charge(s), ${r.skipped_existing} already posted.`);
+    refresh();
+  });
+  if (key) start();
+</script>
+</body>
+</html>
