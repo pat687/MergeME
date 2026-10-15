@@ -348,6 +348,9 @@ for building eXo with the add-on and the version-matching caveat.
 | Token in logs | The token sits after `#` in the link (never sent to the server); the page sends it in an `X-Offer-Token` header, which isn't logged |
 | Bid links | One signed link per attorney (`bids:{id}:{version}`, sent in an `X-Attorney-Token` header). Sending a new link bumps `attorneys.bids_link_version`, which turns off every earlier link; links also stop working when the attorney is deactivated. Bid links are only in the bid-link email, never in offer emails, which tend to be forwarded |
 | Consumer PII | Name, phone and email withheld until accepted; the description is redacted (names, phones, emails, street addresses) in previews and offer emails |
+| Data minimization | Inquiries from states or practice areas that aren't open are refused before anything is stored; injury questions only in injury areas; eXo gets no contact details unless `ROUTER_EXO_SYNC_CONTACT_DETAILS=true` |
+| Erasure and retention | `services/privacy.py`: erase a lead at two levels (its story and health details, then contact details), scrubbing email copies too; the worker applies `ROUTER_RETENTION_*` every 10 minutes; a legal hold stops both |
+| Production checks | With `ROUTER_DEMO_MODE=false` startup fails on an http public URL, the Mailpit inbox, license checks off, or no legal entity name and address |
 | XSS | Pages build DOM with `textContent` only; no `innerHTML` with user data |
 | Bots and abuse | Honeypot field, link-spam and disposable-domain checks, names limited to letters with no domain-like periods, receipts that contain no submitted text, per-IP intake rate limit |
 | Consent IP | Uvicorn honors `X-Forwarded-For` only from `FORWARDED_ALLOW_IPS` (`ROUTER_TRUSTED_PROXY_IPS`, default 127.0.0.1; through a published Docker port the router sees the network gateway instead, see the RUNBOOK); the stored value must parse as an IP |

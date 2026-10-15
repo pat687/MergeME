@@ -244,6 +244,18 @@ their links for good. Subscribers see the page but can't bid: a bid would cost t
 so they're asked after paying attorneys and never set anyone's price. Auction rules
 (`ROUTER_AUCTION_PRICING`, `ROUTER_BID_INCREMENT_CENTS`) are configurable.
 
+**Legal guardrails.** Nothing is sold in a state until it's listed in
+`ROUTER_LAUNCH_STATES`, and states or practice areas a legal audit flagged (for example
+California, Texas, Colorado and Michigan entirely, and injury cases in health-data states)
+stay closed until counsel's approval is recorded. The form asks for the state and type of
+matter first and says straight away when it can't help, before anyone types details.
+Consumers agree in plain words, with a separate box for health or immigration details, are
+told which attorney received their inquiry, and can have their data found and erased; the
+worker erases data on a retention schedule unless a legal hold applies. Attorneys get leads
+only after a recorded bar-license check. See [docs/COMPLIANCE.md](docs/COMPLIANCE.md) and,
+for your lawyer, [docs/legal/COUNSEL_BRIEF.md](docs/legal/COUNSEL_BRIEF.md). This is not
+legal advice.
+
 All of it is configurable in `.env` (`ROUTER_DISTRIBUTION_POLICY`,
 `ROUTER_SHARED_MAX_ATTORNEYS`, time limits, floor prices, business timezone). No code changes needed.
 

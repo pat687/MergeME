@@ -148,11 +148,52 @@ docker compose start exo
    including set-price areas. Attorneys paying per lead whose price is below it stop getting
    leads in that area. Open the dashboard's Market panel: anyone affected is marked
    "below lowest bid", and you can re-price them with `PATCH /api/v1/admin/attorneys/{id}`.
+6. After upgrading to the release with the legal guardrails, **no inquiry is accepted until
+   you list states** in `ROUTER_LAUNCH_STATES`. To keep a local demo working, copy the
+   "Where leads may be sold" block from `.env.example` into your `.env` (demo values for
+   the fictional Illinois network) and run `make up`. For real use, set them from counsel's
+   written approval; see [COMPLIANCE.md](COMPLIANCE.md#2-where-leads-may-be-sold). Also record
+   a bar-license check for every attorney (`POST /api/v1/admin/attorneys/{id}/license-check`)
+   or they stop getting leads; the demo `.env` turns that check off.
+
+## People's data: requests, holds and retention
+
+The full procedure is in [legal/PRIVACY_AND_SECURITY_PROGRAM.md](legal/PRIVACY_AND_SECURITY_PROGRAM.md).
+The tools (all need the admin key; try them at `/docs`):
+
+| Task | Call |
+|---|---|
+| Find everything about a person (access request) | `GET /api/v1/admin/privacy/lookup?email=...` or `?phone=...` |
+| Delete their story and health details, keep consent evidence | `POST /api/v1/admin/leads/{id}/erase` with `{"level": "narrative", "reason": "request #..."}` |
+| Delete everything, including name and contact details | the same with `"level": "full"` |
+| Stop all deleting for a lead (lawsuit, subpoena, complaint) | `POST /api/v1/admin/leads/{id}/legal-hold` with `{"on": true, "reason": "..."}` |
+| Run the retention schedule now | `POST /api/v1/admin/retention/run` (the worker also runs it every 10 minutes) |
+
+Erasing a lead still on offer withdraws it, and attorneys who received the contact details
+are emailed a request to delete them. Erasing can't reach copies outside the router: backups
+(they age out), attorneys' own mailboxes, and eXo if `ROUTER_EXO_SYNC_CONTACT_DETAILS=true`.
+
+## Attorneys: license checks and the agreement
+
+- Before an attorney gets leads, look them up on each state bar's website and record it:
+  `POST /api/v1/admin/attorneys/{id}/license-check` with `{"license_numbers": {"IL": "6301234"}}`.
+  Repeat at least every `ROUTER_LICENSE_RECHECK_DAYS` (90); after that they stop getting leads.
+- Once counsel has a participation agreement, set `ROUTER_ATTORNEY_AGREEMENT_VERSION` and
+  record each acceptance: `POST /api/v1/admin/attorneys/{id}/agreement` with `{"version": "..."}`.
+  Attorneys who haven't accepted that version stop getting leads.
 
 ## Going to production
 
+With `ROUTER_DEMO_MODE=false` the router refuses to start unless the public URL is
+`https://`, the mail server isn't Mailpit, license checks are on, and the legal entity name
+and postal address are set.
+
 - [ ] Real domain + TLS (terminate at `exo-proxy` or an upstream load balancer)
 - [ ] `ROUTER_DEMO_MODE=false`, and secrets from a secret manager rather than `.env`
+- [ ] `ROUTER_LAUNCH_STATES` and `ROUTER_COUNSEL_CLEARED` from counsel's written approval;
+  `ROUTER_LEGAL_ENTITY_NAME`, `ROUTER_POSTAL_ADDRESS`, `ROUTER_PRIVACY_EMAIL`
+- [ ] Single sign-on with MFA in front of `/admin` and `/docs` at the proxy
+- [ ] Encrypted disks, and encrypted backups kept off the machine for 30 days
 - [ ] Real SMTP provider (`ROUTER_SMTP_HOST`, `_USERNAME`, `_PASSWORD`, `_STARTTLS=true`)
 - [ ] Remove Mailpit and the Elasticsearch disk-watermark override
 - [ ] Nightly backups copied off the machine, plus a tested restore
@@ -160,4 +201,4 @@ docker compose start exo
 - [ ] A shared rate limit on `/api/v1/intake` at the proxy (the built-in one is per process)
 - [ ] If a proxy sits in front of the router, set `ROUTER_TRUSTED_PROXY_IPS` to the address the
   router sees it as (see [Behind a reverse proxy](#behind-a-reverse-proxy))
-- [ ] Legal sign-off: see [COMPLIANCE.md](COMPLIANCE.md#6-launch-checklist-business-and-legal)
+- [ ] Legal sign-off: see [COMPLIANCE.md](COMPLIANCE.md#7-launch-checklist-business-and-legal)
