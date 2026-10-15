@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Your Lead Bids</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main class="wrap wide">
+  <header class="top">
+    <h1>Your lead bids</h1>
+    <span class="tag">For participating attorneys</span>
+  </header>
+  <div id="view" class="card"><p class="muted">Loading...</p></div>
+  <p id="status" class="sr-only" role="status"></p>
+</main>
+
+<script type="module">
+  import { api, fill, h, money } from "/static/common.js";
+
+  const attorneyId = location.pathname.split("/").pop();
+  // The token lives after '#', which browsers never send to the server.
+  const token = new URLSearchParams(location.hash.slice(1)).get("t") || "";
+  const headers = { "X-Attorney-Token": token };
+  const view = document.getElementById("view");
+  const status = document.getElementById("status");
+  let saving = false;
+
+  const toDollars = (cents) => (cents === null || cents === undefined ? "" : (cents / 100).toFixed(2));
+
+  function place(a) {
+    if (a.my_bid_cents === null) return "Not bidding";
+    if (!a.auctioned) return "Set price";
+    return `#${a.rank} of ${a.competing_bidders + 1}${a.tied ? " (tied)" : ""}`;
+  }
+
+  function render(d, message) {
+    const rows = d.areas.map((a) => {
+      const input = h("input", {
+        type: "number", min: "0", step: "0.01", inputmode: "decimal",
+        id: `bid_${a.practice_area}`, "data-area": a.practice_area,
+        "data-before": toDollars(a.my_bid_cents), value: toDollars(a.my_bid_cents),
+        placeholder: "none", "aria-describedby": "bids_help",
+      });
+      return h("tr", {},
+        h("th", { scope: "row" },
+          h("label", { for: `bid_${a.practice_area}` }, a.label),
+          a.exclusive_territory ? h("div", { class: "small muted" }, "Your exclusive territory") : null),
+        h("td", {}, h("span", { class: "bid" }, "$", input)),
+        h("td", {}, place(a)),
+        h("td", {}, a.auctioned ? money(a.to_be_first_cents) : "-"),
+        h("td", {}, a.auctioned ? money(a.floor_cents) : "-"),
+        h("td", {}, a.sold_last_30_days
+          ? `${a.sold_last_30_days} sold, average ${money(a.average_price_cents)}` : "-"));
+    });
+    fill(view,
+      h("h2", { style: "margin-top:0" }, `${d.name}, ${d.firm}`),
+      h("p", { id: "bids_help" }, d.pricing_rule),
+      h("p", { id: "message", class: message?.error ? "error" : "small", role: message?.error ? "alert" : null },
+        message?.text ?? ""),
+      h("form", { id: "bids_form", onsubmit: save },
+        h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {},
+            h("th", {}, "Practice area"), h("th", {}, "Your bid"), h("th", {}, "Your place"),
+            h("th", {}, "Bid to be first"), h("th", {}, "Lowest bid"), h("th", {}, "Last 30 days"))),
+          h("tbody", {}, rows))),
+        h("div", { class: "actions" }, h("button", { type: "submit", id: "save" }, "Save bids"))),
+      h("p", { class: "small muted" },
+        "Leave a bid empty to stop receiving leads in that area. Changes apply to the next lead."));
+  }
+
+  function showError(text) {
+    const box = document.getElementById("message");
+    box.className = "error";
+    box.setAttribute("role", "alert");
+    box.textContent = text;
+  }
+
+  async function save(event) {
+    event.preventDefault();
+    if (saving) return;
+    // Send only what changed, so an untouched area can never trip a rule.
+    const bids = {};
+    for (const input of view.querySelectorAll("input[data-area]")) {
+      const raw = input.value.trim();
+      if (raw === input.dataset.before) continue;
+      if (raw === "") { bids[input.dataset.area] = null; continue; }
+      const dollars = Number(raw);
+      if (!Number.isFinite(dollars) || dollars < 0) {
+        input.focus();
+        return showError("Enter each bid as a dollar amount, like 85 or 85.50.");
+      }
+      bids[input.dataset.area] = Math.round(dollars * 100);
+    }
+    if (!Object.keys(bids).length) return showError("Nothing changed yet.");
+    saving = true;
+    document.getElementById("save").disabled = true;
+    try {
+      const d = await api(`/api/v1/bids/${attorneyId}`, { method: "PUT", headers, body: { bids_cents: bids } });
+      render(d, { text: "Saved. Your new bids apply to the next lead." });
+      status.textContent = "Bids saved.";
+    } catch (err) {
+      showError(err.message);
+      document.getElementById("save").disabled = false;
+    } finally {
+      saving = false;
+    }
+  }
+
+  try {
+    render(await api(`/api/v1/bids/${attorneyId}`, { headers }));
+  } catch (err) {
+    fill(view, h("p", { class: "error" }, err.message));
+    status.textContent = err.message;
+  }
+</script>
+</body>
+</html>

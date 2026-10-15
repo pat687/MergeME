@@ -168,3 +168,8 @@ tbody tr:hover, tbody tr.selected { background: var(--surface-2); }
 pre.detail { margin: 4px 0 0; white-space: pre-wrap; font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .toolbar { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
 .toolbar label { min-width: 160px; }
+
+/* Bids page: a dollar amount per practice area. */
+.bid { display: inline-flex; align-items: center; gap: 4px; }
+.bid input { width: 7.5em; }
+tbody th { font-size: 14px; color: var(--text); font-weight: 600; }

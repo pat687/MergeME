@@ -21,16 +21,18 @@ from app.schemas import (
     AttorneyOut,
     AttorneyUpdate,
     AuditOut,
+    BidLinkOut,
     BillingRunResult,
     LeadDetail,
     LeadSummary,
     LedgerEntryOut,
+    MarketArea,
     OfferOut,
     Statement,
     TerritoryCreate,
     TerritoryOut,
 )
-from app.services import billing, links
+from app.services import billing, emails, links, market, outbox
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -164,6 +166,28 @@ def update_attorney(
         setattr(attorney, field, value)
     db.commit()
     return attorney
+
+
+@router.post(
+    "/attorneys/{attorney_id}/bid-link",
+    response_model=BidLinkOut,
+    summary="Email an attorney the link to manage their own bids",
+)
+def send_bid_link(
+    attorney_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
+) -> BidLinkOut:
+    attorney = _get_or_404(db, Attorney, attorney_id)
+    link = links.bids_link(settings.public_base_url, settings.link_signing_secret, attorney.id)
+    outbox.enqueue(db, "email", emails.bids_email(settings, attorney, link))
+    db.commit()
+    return BidLinkOut(sent_to=attorney.email, link=link if settings.demo_mode else None)
+
+
+@router.get("/market", response_model=list[MarketArea], summary="Bids and recent prices per area")
+def market_view(
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
+) -> list[dict]:
+    return market.overview(db, settings, utcnow())
 
 
 @router.get("/territories", response_model=list[TerritoryOut])

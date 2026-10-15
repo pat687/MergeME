@@ -32,7 +32,7 @@ from app.config import Settings
 from app.domain.types import DistributionModel, LeadStatus, OfferStatus
 from app.models import Attorney, Lead, Offer
 from app.schemas import OfferView
-from app.services import audit, billing, emails, links, outbox
+from app.services import audit, billing, emails, links, market, outbox
 
 
 class OfferError(Exception):
@@ -436,6 +436,7 @@ def view(db: Session, settings: Settings, offer_id: str, token: str, now: dateti
         seconds_left=seconds_left,
         contact=contact,
         notice=_notice(offer),
+        price_note=market.price_note(settings, lead.distribution_model, offer.price_cents),
     )
 
 

@@ -138,8 +138,9 @@ def main() -> None:
         print(f"  {f['points']:+4d}  {f['reason']}")
     print(f"  {BOLD}= {j['score']}/100, tier {j['tier']}{RESET}")
 
-    step(3, "Ping tree: the highest bidder gets the first chance",
-         "Personal injury in 60601 is auctioned. If someone passes, the next bidder is asked.")
+    step(3, "Ping tree: the highest bidder gets the first chance, the market sets the price",
+         "Personal injury in 60601 is auctioned. Each attorney pays $1 more than the next bid in "
+         "line, never more than their own bid. If someone passes, the next bidder is asked.")
     for o in j["offers"]:
         print(f"  round {o['round']}: {names[o['attorney_id']]:<13} ${o['price_cents'] / 100:>6.2f}  {o['status']}")
     print("  Avery passes...")

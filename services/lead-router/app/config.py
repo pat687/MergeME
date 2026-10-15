@@ -8,6 +8,7 @@ auction, where email goes) lives here, so nobody has to edit code to change it.
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -67,6 +68,13 @@ class Settings(BaseSettings):
             "*": 1500,
         }
     )
+    # How the auction sets the price. "second_price": the winner pays one increment above
+    # the next-highest bid (or the floor), never more than their own bid, so bidding your
+    # true value is always safe. "first_price": the winner pays their own bid.
+    auction_pricing: Literal["second_price", "first_price"] = "second_price"
+    bid_increment_cents: int = Field(default=100, ge=0)
+    # Highest bid an attorney can enter themselves; catches typos like $15,000.
+    max_bid_cents: int = Field(default=500_000, ge=1)
     duplicate_window_days: int = 30
     # Daily lead caps reset at midnight in this timezone, not at midnight UTC.
     business_timezone: str = "America/Chicago"

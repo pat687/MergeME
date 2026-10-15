@@ -8,6 +8,7 @@ from app.config import Settings
 from app.domain import compliance
 from app.domain.types import PracticeArea
 from app.models import Attorney, Lead, Offer
+from app.services import links, market
 
 
 def _money(cents: int) -> str:
@@ -20,12 +21,15 @@ def offer_email(
     area = PracticeArea(lead.practice_area).label
     expires = offer.expires_at.strftime("%H:%M UTC") if offer.expires_at else "no deadline"
     flags = "\n".join(f"  - {f}" for f in lead.flags) or "  (none)"
+    note = market.price_note(settings, lead.distribution_model, offer.price_cents)
+    how_priced = f"\n                {note}" if note else ""
+    bids = links.bids_link(settings.public_base_url, settings.link_signing_secret, attorney.id)
     body = f"""Hello {attorney.name},
 
 A new {area} inquiry is available in {lead.zip_code}, {lead.state}.
 
   Quality tier: {lead.tier} (score {lead.score}/100)
-  Price:        {_money(offer.price_cents)}
+  Price:        {_money(offer.price_cents)}{how_priced}
   Respond by:   {expires}
 
 What they told us (contact details are shared once you accept):
@@ -36,6 +40,9 @@ Notes:
 
 Accept or decline here:
   {link}
+
+See where you rank and change your bids any time:
+  {bids}
 
 You decide whether to take on any matter. {settings.platform_name} does not
 evaluate cases or recommend attorneys to consumers.
@@ -85,3 +92,20 @@ Reference number: {lead.id[:8].upper()}
         "subject": f"We received your inquiry - {settings.platform_name}",
         "body": body,
     }
+
+
+def bids_email(settings: Settings, attorney: Attorney, link: str) -> dict[str, Any]:
+    body = f"""Hello {attorney.name},
+
+Here is your private link to manage your lead bids with {settings.platform_name}:
+
+  {link}
+
+On that page you can see, for each practice area, where your bid ranks, the bid
+that would put you first in line, and what leads have sold for in the last 30
+days, and change your bids. Changes apply to the next lead.
+
+You only pay for leads you accept, and the price never depends on whether you
+are hired. Keep this link private: anyone with it can change your bids.
+"""
+    return {"to": attorney.email, "subject": "Manage your lead bids", "body": body}

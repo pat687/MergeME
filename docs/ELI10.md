@@ -94,6 +94,8 @@ can win. No ties, no fights.
 **Ping tree: "Auction line."**
 Up to three lawyers line up by how much they offered to pay. The top one gets asked first
 and has 90 seconds to answer. If they say no or don't answer, the next one in line is asked.
+Like a fair auction, the winner doesn't pay their whole bid: they pay $1 more than the next
+lawyer's bid. So it's safe to bid what a lead is really worth to you.
 
 Why only three? Jamie's checkbox said "up to 3 lawyers may contact me", so the computer
 never shows the request to a fourth. And a lawyer who has hit their daily limit can't

@@ -369,6 +369,7 @@ class OfferView(BaseModel):
     )
     contact: dict[str, Any] | None = None
     notice: str | None = None
+    price_note: str | None = Field(default=None, description="How this offer's price was set")
 
 
 # --------------------------------------------------------------------------- #
@@ -449,3 +450,63 @@ class BillingRunResult(BaseModel):
     period: str
     created: int
     skipped_existing: int
+
+
+# --------------------------------------------------------------------------- #
+# The lead marketplace: attorneys set their own bids
+# --------------------------------------------------------------------------- #
+class BidRow(BaseModel):
+    practice_area: PracticeArea
+    label: str
+    my_bid_cents: int | None = Field(description="Empty = not taking leads in this area")
+    auctioned: bool = Field(description="True where leads are sold by auction (ping tree)")
+    floor_cents: int = Field(description="Lowest bid the auction accepts (0 if not auctioned)")
+    competing_bidders: int = Field(
+        description="Other active attorneys who could get the same leads"
+    )
+    rank: int | None = Field(description="1 = first in line in the auction")
+    tied: bool
+    to_be_first_cents: int | None = Field(description="Bid that would put you first in line")
+    sold_last_30_days: int
+    average_price_cents: int | None
+    exclusive_territory: bool = Field(description="You rent an exclusive ZIP in this area")
+
+
+class BidsView(BaseModel):
+    attorney_id: int
+    name: str
+    firm: str
+    plan: BillingPlan
+    pricing_rule: str
+    increment_cents: int
+    max_bid_cents: int
+    areas: list[BidRow]
+
+
+class BidsUpdate(BaseModel):
+    """Only the areas listed change. A number sets the bid, null stops leads in that area."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bids_cents: dict[PracticeArea, int | None] = Field(min_length=1)
+
+
+class BidLinkOut(BaseModel):
+    sent_to: str
+    link: str | None = Field(default=None, description="Shown only in demo mode")
+
+
+class MarketBidder(BaseModel):
+    attorney_id: int
+    name: str
+    bid_cents: int
+
+
+class MarketArea(BaseModel):
+    practice_area: PracticeArea
+    label: str
+    model: DistributionModel
+    floor_cents: int
+    bidders: list[MarketBidder]
+    sold_last_30_days: int
+    average_price_cents: int | None

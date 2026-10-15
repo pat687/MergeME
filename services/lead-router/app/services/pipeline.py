@@ -123,6 +123,8 @@ def _plan(
         policy_model=DistributionModel(settings.policy_for(inquiry.practice_area)),
         max_recipients=settings.shared_max_attorneys,
         floor_cents=settings.floor_for(inquiry.practice_area),
+        pricing=settings.auction_pricing,
+        increment_cents=settings.bid_increment_cents,
     )
 
 

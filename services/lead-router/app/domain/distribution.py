@@ -6,9 +6,11 @@ Three ways, like three ways of giving out a job:
                automatically, nobody else is asked.
 * Shared     - Up to N attorneys are asked at the same time. The first one to
                claim it wins ("speed to lead").
-* Ping tree  - Everyone above the price floor is lined up by how much they bid. The
-               top bidder is asked first; if they pass or time runs out, the next
-               one is asked, until N attorneys have been asked.
+* Ping tree  - An auction. Everyone above the price floor is lined up by how much
+               they bid. The top bidder is asked first; if they pass or time runs
+               out, the next one is asked, until N attorneys have been asked. The
+               market sets the price: each attorney pays one increment above the
+               next bid in line (or the floor), never more than their own bid.
 
 N is the number of attorneys the consumer agreed to in the consent text, so no
 model ever shares an inquiry with more attorneys than that. For the ping tree the
@@ -62,6 +64,8 @@ def plan_distribution(
     policy_model: DistributionModel,
     max_recipients: int,
     floor_cents: int,
+    pricing: str = "second_price",
+    increment_cents: int = 100,
 ) -> DistributionPlan:
     where = {"practice_area": practice_area, "zip_code": zip_code, "state": state}
     skipped: dict[int, str] = {}
@@ -90,7 +94,9 @@ def plan_distribution(
             eligible.append(c)
 
     if policy_model == DistributionModel.PING_TREE:
-        return _ping_tree(eligible, practice_area, floor_cents, max_recipients, skipped)
+        return _ping_tree(
+            eligible, practice_area, floor_cents, max_recipients, skipped, pricing, increment_cents
+        )
     return _shared(eligible, practice_area, max_recipients, skipped)
 
 
@@ -113,12 +119,22 @@ def _shared(
     )
 
 
+def market_price(own_bid: int, next_bid: int | None, floor_cents: int, increment_cents: int) -> int:
+    """Second-price rule: one increment above the next bid in line (the floor if nobody
+    is behind you), never more than your own bid. Bidding what a lead is truly worth to
+    you is always safe: you never pay more than it takes to beat the next attorney."""
+    market = floor_cents if next_bid is None else max(floor_cents, next_bid + increment_cents)
+    return min(own_bid, market)
+
+
 def _ping_tree(
     eligible: list[Candidate],
     practice_area: str,
     floor_cents: int,
     max_recipients: int,
     skipped: dict[int, str],
+    pricing: str,
+    increment_cents: int,
 ) -> DistributionPlan:
     bidders: list[Candidate] = []
     for c in eligible:
@@ -132,19 +148,30 @@ def _ping_tree(
     ranked = sorted(
         bidders, key=lambda c: (-c.bid_for(practice_area), c.accepted_today, c.attorney_id)
     )
+    bids = [c.bid_for(practice_area) for c in ranked]
+
+    def price(position: int, c: Candidate) -> int:
+        if c.plan == BillingPlan.SUBSCRIPTION:
+            return 0  # subscribers pay a flat monthly fee, not per lead
+        if pricing == "first_price":
+            return bids[position]
+        following = bids[position + 1] if position + 1 < len(bids) else None
+        return market_price(bids[position], following, floor_cents, increment_cents)
+
     offers = [
         OfferSpec(
             c.attorney_id,
-            position,
-            _price(c, practice_area),
-            OfferStatus.PENDING if position == 1 else OfferStatus.QUEUED,
+            position + 1,
+            price(position, c),
+            OfferStatus.PENDING if position == 0 else OfferStatus.QUEUED,
         )
-        for position, c in enumerate(ranked, start=1)
+        for position, c in enumerate(ranked)
     ]
     asked = min(len(offers), max_recipients)
+    rule = "second-price" if pricing == "second_price" else "first-price"
     return DistributionPlan(
         DistributionModel.PING_TREE,
         offers,
         skipped,
-        f"{len(offers)} bidders lined up by bid; at most {asked} will be asked",
+        f"{len(offers)} bidders lined up by bid ({rule}); at most {asked} will be asked",
     )

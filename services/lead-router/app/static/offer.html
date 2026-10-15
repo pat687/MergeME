@@ -125,6 +125,7 @@
         ? h("span", { class: "small muted" }, "Time left: ", countdown(o.seconds_left)) : null),
       h("p", {}, o.notice),
       h("div", { class: "facts" }, facts.map(([k, v]) => h("div", { class: "fact" }, h("div", { class: "k" }, k), h("div", { class: "v" }, v)))),
+      o.price_note ? h("p", { class: "small muted", id: "price_note" }, o.price_note) : null,
       h("h3", {}, "What they told us"),
       h("p", {}, `"${o.summary}"`),
       o.contact ? h("div", { class: "notice" },

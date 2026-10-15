@@ -36,6 +36,11 @@ async def offer_page(offer_id: str, request: Request) -> Response:
     return await _pages.get_response("offer.html", request.scope)
 
 
+@router.get("/bids/{attorney_id}")
+async def bids_page(attorney_id: str, request: Request) -> Response:
+    return await _pages.get_response("bids.html", request.scope)
+
+
 @router.get("/admin")
 async def admin_page(request: Request) -> Response:
     return await _pages.get_response("admin.html", request.scope)

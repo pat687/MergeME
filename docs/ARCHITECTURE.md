@@ -218,18 +218,27 @@ sequenceDiagram
 sequenceDiagram
     participant R as Router
     participant W as Worker
-    participant A as Avery ($95)
-    participant J as Jordan ($80)
-    participant S as Sam ($70)
-    Note over R: line-up by bid: Avery(pending) Jordan(queued) Sam(queued)
+    participant A as Avery (bid $95)
+    participant J as Jordan (bid $80)
+    participant S as Sam (bid $70)
+    Note over R: line-up by bid, market prices: Avery $81, Jordan $71, Sam $50 (floor)
     R->>A: offer email (no contact info), 90s
     A->>R: decline
     R->>J: activate round 2, offer email, 90s
     Note over J: no answer
     W->>R: expire_due(now): round 2 expired
     R->>S: activate round 3 (skipped if inactive or capped)
-    S->>R: accept -> assigned, charged $70
+    S->>R: accept -> assigned, charged $50
 ```
+
+**The market sets the price.** With `ROUTER_AUCTION_PRICING=second_price` (the default)
+each attorney's price is one increment (`ROUTER_BID_INCREMENT_CENTS`, $1) above the next bid
+in line, or the floor if nobody is behind them, and never more than their own bid
+(`distribution.market_price`). This is the second-price rule ad auctions use: bidding what a
+lead is truly worth is always safe, so attorneys stop gaming their bids and the price
+settles where real demand is. Prices are fixed on each offer when the line-up is made.
+Attorneys change their own bids on a signed bid page (`/bids/{id}`, `app/api/bids.py`);
+`app/services/market.py` computes their rank, the bid to be first and recent sale prices.
 
 Every bidder above the floor joins the line, but no more attorneys are *asked*
 (`activated_at` set) than the person agreed to. That number is stored on the lead with

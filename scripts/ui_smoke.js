@@ -230,6 +230,33 @@ async function newFamilyLead() {
     Math.abs(placeAfter[0] - placeBefore[0]) <= 2 && placeAfter[1] === placeBefore[1],
     JSON.stringify({ placeBefore, placeAfter }));
 
+  // Bid page: an attorney sees where they rank, gets a clear reason when a bid is too
+  // low, and moves to first place by raising it.
+  const sam = (await adminGet("/api/v1/admin/attorneys")).find((a) => a.name === "Sam Okafor");
+  const bidLink = (await (await fetch(`${BASE}/api/v1/admin/attorneys/${sam.id}/bid-link`,
+    { method: "POST", headers: { "X-Admin-Key": KEY } })).json()).link;
+  page = await open({ viewport: { width: 390, height: 900 } });
+  await page.goto(bidLink);
+  await page.waitForSelector("#bid_personal_injury");
+  const piPlace = () => page.$eval("#bid_personal_injury", (el) => el.closest("tr").cells[2].textContent);
+  const rankBefore = await piPlace();
+  await page.fill("#bid_personal_injury", "10");
+  await page.click("#save");
+  await page.waitForSelector("#message.error");
+  const tooLow = await page.textContent("#message");
+  await page.fill("#bid_personal_injury", "99");
+  await page.click("#save");
+  await page.waitForSelector("text=Saved.");
+  const rankAfter = await piPlace();
+  const bidOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  check("attorney bid page explains the floor and a higher bid moves them to first",
+    /lowest bid accepted/.test(tooLow) && !rankBefore.startsWith("#1 ") && rankAfter.startsWith("#1 ")
+      && bidOverflow <= 0, JSON.stringify({ tooLow, rankBefore, rankAfter, bidOverflow }));
+  await fetch(`${BASE}/api/v1/bids/${sam.id}`, {  // put Sam's bid back for anyone reusing the stack
+    method: "PUT", headers: { "Content-Type": "application/json", "X-Attorney-Token": tokenOf(bidLink) },
+    body: JSON.stringify({ bids_cents: { personal_injury: 7000 } }),
+  });
+
   check("no JavaScript errors on any page", pageErrors.length === 0, pageErrors.join(" | "));
   await browser.close();
 
