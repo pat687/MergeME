@@ -28,8 +28,17 @@ class ExoSyncError(RuntimeError):
     pass
 
 
-def lead_payload(lead: Lead) -> dict[str, Any]:
-    """Build the outbox payload for creating the lead in eXo."""
+def exo_email(lead: Lead, contact_details: bool) -> str:
+    """The address eXo knows the lead by. Without contact details it's a placeholder on the
+    reserved .invalid domain, so it can never reach anyone."""
+    return lead.email if contact_details else f"{lead.id}@leads.invalid"
+
+
+def lead_payload(lead: Lead, contact_details: bool = False) -> dict[str, Any]:
+    """Build the outbox payload for creating the lead in eXo. Without contact_details
+    (ROUTER_EXO_SYNC_CONTACT_DETAILS) eXo gets no name, email, phone or description, so
+    erasing a lead in the router (services/privacy.py) leaves nothing personal in eXo."""
+    ref = lead.id[:8].upper()
     fields = {
         "router_lead_id": lead.id,
         "practice_area": lead.practice_area,
@@ -38,14 +47,14 @@ def lead_payload(lead: Lead) -> dict[str, Any]:
         "score": str(lead.score),
         "tier": lead.tier or "",
         "distribution_model": lead.distribution_model or "",
-        "description": lead.description,
+        "description": lead.description if contact_details else "(kept in the lead router)",
     }
     return {
         "lead": {
-            "mail": lead.email,
-            "firstName": lead.first_name,
-            "lastName": lead.last_name,
-            "phone": lead.phone,
+            "mail": exo_email(lead, contact_details),
+            "firstName": lead.first_name if contact_details else "Lead",
+            "lastName": lead.last_name if contact_details else ref,
+            "phone": lead.phone if contact_details else "",
             "inferredCountry": "US",
             "personSource": "Barrgo intake",
             "captureSourceInfo": f"router lead {lead.id}",

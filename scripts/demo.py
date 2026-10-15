@@ -58,6 +58,9 @@ def step(n: int, title: str, why: str) -> None:
     print(f"\n{BOLD}Step {n}. {title}{RESET}\n{DIM}{why}{RESET}")
 
 
+CONSENT_VERSION = ""  # the wording version the form currently shows; read from /api/v1/meta
+
+
 def person(first: str, last: str, **overrides) -> dict:
     data = {
         "first_name": first,
@@ -75,7 +78,9 @@ def person(first: str, last: str, **overrides) -> dict:
         "injured": True,
         "medical_treatment": True,
         "consent": True,
-        "consent_version": "2026-10-01",
+        "consent_version": CONSENT_VERSION,
+        "sensitive_consent": True,  # the separate consent for health or immigration details
+        "federal_or_maritime_worker": False,
     }
     data.update(overrides)
     return data
@@ -114,6 +119,18 @@ def main() -> None:
     names = attorneys()
     if not names:
         sys.exit("No attorneys yet. Run `make seed` first.")
+    global CONSENT_VERSION
+    meta = call("GET", "/api/v1/meta")[1]
+    CONSENT_VERSION = meta["consent_version"]
+    if "personal_injury" not in meta["open"].get("IL", []):
+        sys.exit("Illinois personal injury isn't open: set ROUTER_LAUNCH_STATES and "
+                 "ROUTER_COUNSEL_CLEARED as in .env.example (demo values), then `make up`.")
+    unchecked = [a["name"] for a in call("GET", "/api/v1/admin/attorneys", admin=True)[1]
+                 if not a.get("license_verified_at")]
+    if unchecked:
+        print(f"{YELLOW}Note: no license check recorded for {', '.join(unchecked)}. Unless "
+              f"ROUTER_REQUIRE_LICENSE_VERIFICATION=false (as in .env.example), they get no "
+              f"leads and the demo's expectations will fail.{RESET}")
 
     step(1, "Five people send in the intake form",
          "Each one takes a different path through the system.")
@@ -138,10 +155,13 @@ def main() -> None:
         print(f"  {f['points']:+4d}  {f['reason']}")
     print(f"  {BOLD}= {j['score']}/100, tier {j['tier']}{RESET}")
 
-    step(3, "Ping tree: the highest bidder gets the first chance",
-         "Personal injury in 60601 is auctioned. If someone passes, the next bidder is asked.")
+    step(3, "Ping tree: the highest bidder gets the first chance, the market sets the price",
+         "Personal injury in 60601 is auctioned. Each attorney pays $1 more than the next bid in "
+         "line, never more than their own bid. If someone passes, the next bidder is asked.")
     for o in j["offers"]:
         print(f"  round {o['round']}: {names[o['attorney_id']]:<13} ${o['price_cents'] / 100:>6.2f}  {o['status']}")
+    check([o["price_cents"] for o in sorted(j["offers"], key=lambda o: o["round"])] == [8100, 7100, 5000],
+          "bids of $95, $80 and $70 are priced $81, $71 and $50")
     print("  Avery passes...")
     respond(offer_by(j, "Avery Stone", names), "decline")
     j = lead(jamie["lead_id"])
@@ -171,11 +191,16 @@ def main() -> None:
          "Attorneys pay per lead or a flat monthly fee. Never a share of what they earn.")
     period = date.today().strftime("%Y-%m")
     call("POST", f"/api/v1/admin/billing/run?period={period}", admin=True)
+    totals = {}
     for attorney_id, name in names.items():
         st = call("GET", f"/api/v1/admin/attorneys/{attorney_id}/statement?period={period}", admin=True)[1]
+        totals[name] = st["total_cents"]
         if st["total_cents"] or st["entries"]:
             kinds = ", ".join(sorted({e["kind"] for e in st["entries"]}))
             print(f"  {name:<13} ${st['total_cents'] / 100:>9.2f}   ({kinds})")
+    jamie_charge = next(o["price_cents"] for o in lead(jamie["lead_id"])["offers"] if o["status"] == "accepted")
+    check(jamie_charge == 7100 and totals.get("Jordan Reyes", 0) >= 7100,
+          "Jordan is billed the $71 market price for Jamie's lead, not the $80 bid")
 
     step(7, "The dashboard numbers", "The same numbers appear at /admin.")
     s = call("GET", "/api/v1/admin/stats", admin=True)[1]

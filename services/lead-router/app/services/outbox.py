@@ -26,8 +26,9 @@ log = logging.getLogger(__name__)
 Handler = Callable[[dict[str, Any]], None]
 
 
-def enqueue(db: Session, kind: str, payload: dict[str, Any]) -> None:
-    db.add(OutboxMessage(kind=kind, payload=payload, next_attempt_at=utcnow()))
+def enqueue(db: Session, kind: str, payload: dict[str, Any], lead_id: str | None = None) -> None:
+    """lead_id: the lead the message is about, if any (erasing that lead blanks it)."""
+    db.add(OutboxMessage(kind=kind, payload=payload, next_attempt_at=utcnow(), lead_id=lead_id))
 
 
 def backoff(attempts: int) -> timedelta:

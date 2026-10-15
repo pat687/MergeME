@@ -79,7 +79,13 @@ def test_ping_tree_walks_down_the_line_until_someone_says_yes(client, app, setti
     sam = offer_for(client, lead, "Sam Okafor")
     assert sam["status"] == "pending"
 
-    # Sam says yes and pays Sam's own bid, a flat $70.
+    # The market set each price when the line-up was made: $1 above the next bid, never
+    # more than the attorney's own bid. Avery $81 (Jordan bid $80), Jordan $71 (Sam bid
+    # $70), Sam $50 (nobody behind him, so the $50 floor).
+    prices = {n: offer_for(client, lead, n)["price_cents"] for n in ("Avery Stone", "Jordan Reyes")}
+    assert (prices, sam["price_cents"]) == ({"Avery Stone": 8100, "Jordan Reyes": 7100}, 5000)
+
+    # Sam says yes and pays the market price, a flat $50.
     r = act(client, sam, "accept")
     assert r.status_code == 200
     assert r.json()["contact"]["phone"] == "3125550142"
@@ -88,7 +94,7 @@ def test_ping_tree_walks_down_the_line_until_someone_says_yes(client, app, setti
     assert lead["status"] == "assigned"
     assert names(client)[lead["assigned_attorney_id"]] == "Sam Okafor"
     charge = db.query(LedgerEntry).filter_by(lead_id=created["lead_id"]).one()
-    assert (charge.kind, charge.amount_cents) == ("per_lead", 7000)
+    assert (charge.kind, charge.amount_cents) == ("per_lead", 5000)
 
 
 def test_ping_tree_goes_unsold_when_everyone_passes(client):

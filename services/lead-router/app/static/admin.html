@@ -41,6 +41,19 @@
       <span class="small muted" id="flash" aria-live="polite"></span>
     </div>
 
+    <details class="card" id="market">
+      <summary><strong>Market: bids and prices</strong></summary>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Practice area</th><th>Sold by</th><th>Lowest bid</th><th>Bidders, highest first</th><th>Sold (30 days)</th><th>Average price</th></tr></thead>
+        <tbody id="market_rows"></tbody>
+      </table></div>
+      <form class="toolbar" id="bid_link_form">
+        <label>Attorney <select id="bid_link_attorney"></select></label>
+        <button class="secondary" type="submit">Email their bid link</button>
+        <span class="small muted" id="bid_link_result" aria-live="polite"></span>
+      </form>
+    </details>
+
     <div class="layout">
       <section class="card">
         <h2 style="margin-top:0">Leads</h2>
@@ -200,14 +213,42 @@
     try {
       const list = await admin("/attorneys");
       attorneys = Object.fromEntries(list.map((a) => [a.id, a.name]));
+      fill(document.getElementById("bid_link_attorney"), list.map((a) => h("option", { value: a.id }, a.name)));
       sessionStorage.setItem("router_admin_key", key);
       document.getElementById("login").hidden = true;
       document.getElementById("app").hidden = false;
       await refresh();
-      setInterval(() => refresh().catch(() => {}), 5000);
+      setInterval(() => {
+        refresh().catch(() => {});
+        loadMarket().catch(() => {});
+      }, 5000);
     } catch (err) {
       document.getElementById("login_error").textContent = err.message;
     }
+  }
+
+  // The market panel loads when opened, and again on each refresh while it's open.
+  let lastMarket = "";
+  async function loadMarket() {
+    const panel = document.getElementById("market");
+    if (!panel.open) return;
+    const areas = await admin("/market");
+    const json = JSON.stringify(areas);
+    // Like the lead detail: don't redraw unchanged rows or wipe text being selected.
+    const selection = window.getSelection();
+    const selecting = selection && !selection.isCollapsed && panel.contains(selection.anchorNode);
+    if (json === lastMarket || selecting) return;
+    lastMarket = json;
+    const bidder = (b) => `${b.name} ${b.plan === "subscription" ? "(subscriber)"
+      : money(b.bid_cents) + (b.below_floor ? " (below lowest bid: gets no leads)" : "")}`
+      + (b.blocked ? ` (no leads: ${b.blocked})` : "");
+    fill(document.getElementById("market_rows"), areas.map((m) => h("tr", {},
+      h("td", {}, m.label),
+      h("td", {}, m.model === "ping_tree" ? "Auction" : "Set price"),
+      h("td", {}, money(m.floor_cents)),
+      h("td", {}, m.bidders.length ? m.bidders.map(bidder).join(" · ") : "-"),
+      h("td", {}, m.sold_last_30_days),
+      h("td", {}, m.average_price_cents ? money(m.average_price_cents) : "-"))));
   }
 
   function flash(text) {
@@ -221,6 +262,18 @@
     start();
   });
   document.getElementById("status_filter").addEventListener("change", refresh);
+  document.getElementById("market").addEventListener("toggle", () => loadMarket().catch(() => {}));
+  document.getElementById("bid_link_form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = document.getElementById("bid_link_attorney").value;
+    const result = document.getElementById("bid_link_result");
+    try {
+      const r = await admin(`/attorneys/${id}/bid-link`, { method: "POST" });
+      fill(result, `Sent to ${r.sent_to}. `, r.link ? h("a", { href: r.link, target: "_blank", rel: "noopener" }, "Open it (demo)") : null);
+    } catch (err) {
+      result.textContent = err.message;
+    }
+  });
   document.getElementById("run_worker").addEventListener("click", async () => {
     const r = await admin("/worker/run", { method: "POST" });
     flash(`Expired ${r.expired} offer(s), sent ${r.delivered} message(s).`);

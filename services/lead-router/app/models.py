@@ -4,6 +4,7 @@ attorneys ──< territories            (an attorney can rent exclusive ZIPs)
 attorneys ──< offers >── leads        (a lead is offered to one or more attorneys)
 leads ──< audit_events                (every decision, written down)
 attorneys ──< ledger_entries          (what each attorney owes, flat fees only)
+attorneys ──< bid_changes             (every save on an attorney's own bid page)
 outbox_messages                       (emails and eXo updates waiting to be sent)
 """
 
@@ -52,9 +53,29 @@ class Attorney(Base):
     daily_cap: Mapped[int] = mapped_column(Integer, default=10)
     exo_username: Mapped[str | None] = mapped_column(String(100))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Bumped each time a bid link is sent; only the newest link works (services/links.py).
+    bids_link_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Staff checked the attorney's bar license(s) on the state bar's site: {"IL": "6301234"}.
+    license_numbers: Mapped[dict[str, str] | None] = mapped_column(JSONField)
+    license_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # The participation agreement version the attorney accepted, and when.
+    agreement_version: Mapped[str | None] = mapped_column(String(40))
+    agreement_accepted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
     territories: Mapped[list[Territory]] = relationship(back_populates="attorney")
+
+
+class BidChange(Base):
+    """Each save on an attorney's bid page: for the record, and for the daily save limit."""
+
+    __tablename__ = "bid_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    attorney_id: Mapped[int] = mapped_column(ForeignKey("attorneys.id"), index=True)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+    # {"personal_injury": [8000, 9900]}: before and after, in cents (null = not bidding).
+    changes: Mapped[dict[str, Any]] = mapped_column(JSONField)
 
 
 class Territory(Base):
@@ -105,6 +126,21 @@ class Lead(Base):
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(String(300))
     utm_source: Mapped[str | None] = mapped_column(String(120))
+    utm_medium: Mapped[str | None] = mapped_column(String(120))
+    utm_campaign: Mapped[str | None] = mapped_column(String(120))
+    utm_content: Mapped[str | None] = mapped_column(String(120))
+    referrer_host: Mapped[str | None] = mapped_column(String(120))
+    landing_path: Mapped[str | None] = mapped_column(String(120))
+    # The separate consent for health or immigration details, word for word, if needed.
+    sensitive_consent_text: Mapped[str | None] = mapped_column(Text)
+    # The browser sent a Global Privacy Control signal ("don't sell or share my data").
+    gpc: Mapped[bool | None] = mapped_column(Boolean)
+
+    # Records: legal holds stop every erase; erased_at / narrative_erased_at say what's gone.
+    legal_hold: Mapped[bool | None] = mapped_column(Boolean)
+    legal_hold_reason: Mapped[str | None] = mapped_column(String(200))
+    narrative_erased_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    erased_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     # What the system decided
     status: Mapped[str] = mapped_column(String(20), index=True)
@@ -150,6 +186,8 @@ class Offer(Base):
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)
     responded_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     decline_reason: Mapped[str | None] = mapped_column(String(200))
+    # How the price was set, in words, written when the offer is priced (market.price_note).
+    price_note: Mapped[str | None] = mapped_column(String(200))
 
     lead: Mapped[Lead] = relationship(back_populates="offers")
     attorney: Mapped[Attorney] = relationship()
@@ -197,6 +235,10 @@ class OutboxMessage(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     kind: Mapped[str] = mapped_column(String(40))
     payload: Mapped[dict[str, Any]] = mapped_column(JSONField)
+    # The lead a message is about, so erasing or holding a lead reaches exactly its copies.
+    lead_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    # When the body was blanked (services/privacy.py); the row stays as a record it was sent.
+    payload_erased_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime, index=True)

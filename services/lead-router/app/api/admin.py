@@ -14,23 +14,30 @@ from app.api.deps import get_db, get_settings, require_admin
 from app.config import Settings
 from app.db import utcnow
 from app.domain.matching import covers_zip
-from app.domain.types import DistributionModel, LeadStatus, OfferStatus
-from app.models import Attorney, Lead, LedgerEntry, Offer, OutboxMessage, Territory
+from app.domain.types import BillingPlan, DistributionModel, LeadStatus, OfferStatus, PracticeArea
+from app.models import Attorney, BidChange, Lead, LedgerEntry, Offer, OutboxMessage, Territory
 from app.schemas import (
+    AgreementIn,
     AttorneyCreate,
     AttorneyOut,
     AttorneyUpdate,
     AuditOut,
+    BidChangeOut,
+    BidLinkOut,
     BillingRunResult,
+    EraseIn,
+    HoldIn,
     LeadDetail,
     LeadSummary,
     LedgerEntryOut,
+    LicenseCheckIn,
+    MarketArea,
     OfferOut,
     Statement,
     TerritoryCreate,
     TerritoryOut,
 )
-from app.services import billing, links
+from app.services import billing, emails, links, market, outbox, privacy
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -147,9 +154,29 @@ def list_attorneys(db: Session = Depends(get_db)) -> list[Attorney]:
     return list(db.scalars(select(Attorney).order_by(Attorney.id)).all())
 
 
+def _check_floors(settings: Settings, plan: str, bids: dict[str, int]) -> None:
+    """The same lowest price the bid page enforces. A pay-per-lead price below it would
+    never get a lead (the line-ups skip it), so refuse it here instead of failing quietly.
+    Subscribers' numbers aren't prices, so they're exempt."""
+    if plan == BillingPlan.SUBSCRIPTION:
+        return
+    low = [
+        f"{PracticeArea(area).label}: the lowest price accepted is "
+        f"${settings.floor_for(area) / 100:,.2f}"
+        for area, cents in bids.items()
+        if cents < settings.floor_for(area)
+    ]
+    if low:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "; ".join(low))
+
+
 @router.post("/attorneys", response_model=AttorneyOut, status_code=status.HTTP_201_CREATED)
-def create_attorney(body: AttorneyCreate, db: Session = Depends(get_db)) -> Attorney:
-    attorney = Attorney(**body.model_dump(mode="json"), created_at=utcnow())
+def create_attorney(
+    body: AttorneyCreate, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
+) -> Attorney:
+    data = body.model_dump(mode="json")
+    _check_floors(settings, data["plan"], data["bids_cents"])
+    attorney = Attorney(**data, created_at=utcnow())
     db.add(attorney)
     db.commit()
     return attorney
@@ -157,13 +184,166 @@ def create_attorney(body: AttorneyCreate, db: Session = Depends(get_db)) -> Atto
 
 @router.patch("/attorneys/{attorney_id}", response_model=AttorneyOut)
 def update_attorney(
-    attorney_id: int, body: AttorneyUpdate, db: Session = Depends(get_db)
+    attorney_id: int,
+    body: AttorneyUpdate,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> Attorney:
     attorney = _get_or_404(db, Attorney, attorney_id)
-    for field, value in body.model_dump(mode="json", exclude_unset=True).items():
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if "bids_cents" in changes:
+        _check_floors(settings, attorney.plan, changes["bids_cents"])
+    if changes.get("active") is False and attorney.active:
+        # Deactivating cuts off every bid link for good: reactivating won't revive one
+        # that leaked. Send a new link after reactivating.
+        attorney.bids_link_version += 1
+    for field, value in changes.items():
         setattr(attorney, field, value)
     db.commit()
     return attorney
+
+
+@router.post(
+    "/attorneys/{attorney_id}/bid-link",
+    response_model=BidLinkOut,
+    summary="Email an attorney the link to manage their own bids",
+)
+def send_bid_link(
+    attorney_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
+) -> BidLinkOut:
+    attorney = _get_or_404(db, Attorney, attorney_id)
+    if not attorney.active:
+        raise HTTPException(status.HTTP_409_CONFLICT, "this attorney is inactive")
+    # A new link turns off every earlier one, so a forwarded or leaked link can be cut off.
+    db.refresh(attorney, with_for_update=True)
+    attorney.bids_link_version += 1
+    link = links.bids_link(
+        settings.public_base_url,
+        settings.link_signing_secret,
+        attorney.id,
+        attorney.bids_link_version,
+    )
+    outbox.enqueue(db, "email", emails.bids_email(settings, attorney, link))
+    db.commit()
+    return BidLinkOut(sent_to=attorney.email, link=link if settings.demo_mode else None)
+
+
+@router.post(
+    "/attorneys/{attorney_id}/license-check",
+    response_model=AttorneyOut,
+    summary="Record that staff checked the attorney's bar license(s) on the state bar's site",
+)
+def record_license_check(
+    attorney_id: int, body: LicenseCheckIn, db: Session = Depends(get_db)
+) -> Attorney:
+    attorney = _get_or_404(db, Attorney, attorney_id)
+    missing = sorted(set(attorney.bar_states) - set(body.license_numbers))
+    extra = sorted(set(body.license_numbers) - set(attorney.bar_states))
+    if missing:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"give a license number for every state the attorney takes leads in: {missing}",
+        )
+    if extra:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"the attorney doesn't take leads in {extra}; update their bar states first",
+        )
+    attorney.license_numbers = body.license_numbers
+    attorney.license_verified_at = utcnow()
+    db.commit()
+    return attorney
+
+
+@router.post(
+    "/attorneys/{attorney_id}/agreement",
+    response_model=AttorneyOut,
+    summary="Record that the attorney accepted a version of the participation agreement",
+)
+def record_agreement(
+    attorney_id: int, body: AgreementIn, db: Session = Depends(get_db)
+) -> Attorney:
+    attorney = _get_or_404(db, Attorney, attorney_id)
+    attorney.agreement_version = body.version
+    attorney.agreement_accepted_at = body.accepted_at or utcnow()
+    db.commit()
+    return attorney
+
+
+# --------------------------------------------------------------------------- #
+# People's data: access and deletion requests, legal holds, retention
+# --------------------------------------------------------------------------- #
+@router.get("/privacy/lookup", summary="Everything held about a person, by email or phone")
+def privacy_lookup(
+    email: str | None = None, phone: str | None = None, db: Session = Depends(get_db)
+) -> list[dict]:
+    if not email and not phone:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "give an email or a phone")
+    return [privacy.export(db, lead) for lead in privacy.find(db, email, phone)]
+
+
+@router.post("/leads/{lead_id}/erase", summary="Erase a lead's personal details")
+def erase_lead(
+    lead_id: str,
+    body: EraseIn,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    lead = _get_or_404(db, Lead, lead_id)
+    try:
+        privacy.erase(
+            db, settings, lead, body.level, utcnow(), reason=body.reason, notify_attorneys=True
+        )
+    except privacy.PrivacyError as err:
+        db.rollback()
+        raise HTTPException(err.status_code, err.message) from err
+    db.commit()
+    return {
+        "lead_id": lead.id,
+        "narrative_erased_at": lead.narrative_erased_at,
+        "erased_at": lead.erased_at,
+        "note": None
+        if not (settings.exo_sync_enabled and settings.exo_sync_contact_details)
+        else "eXo has a copy with contact details: delete it there by hand",
+    }
+
+
+@router.post("/leads/{lead_id}/legal-hold", summary="Put a lead under a legal hold, or lift it")
+def legal_hold(lead_id: str, body: HoldIn, db: Session = Depends(get_db)) -> dict:
+    lead = _get_or_404(db, Lead, lead_id)
+    privacy.set_hold(db, lead, body.on, body.reason)
+    db.commit()
+    return {"lead_id": lead.id, "legal_hold": bool(lead.legal_hold)}
+
+
+@router.post("/retention/run", summary="Run the retention schedule now (the worker also does)")
+def run_retention(
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
+) -> dict:
+    return privacy.purge_due(db, settings, utcnow())
+
+
+@router.get(
+    "/bid-changes",
+    response_model=list[BidChangeOut],
+    summary="Recent saves on attorneys' bid pages, newest first",
+)
+def bid_changes(
+    attorney_id: int | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+) -> list[BidChange]:
+    query = select(BidChange).order_by(BidChange.at.desc(), BidChange.id.desc()).limit(limit)
+    if attorney_id is not None:
+        query = query.where(BidChange.attorney_id == attorney_id)
+    return list(db.scalars(query).all())
+
+
+@router.get("/market", response_model=list[MarketArea], summary="Bids and recent prices per area")
+def market_view(
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings)
+) -> list[dict]:
+    return market.overview(db, settings, utcnow())
 
 
 @router.get("/territories", response_model=list[TerritoryOut])
@@ -205,9 +385,15 @@ def create_territory(body: TerritoryCreate, db: Session = Depends(get_db)) -> Te
     response_model=BillingRunResult,
     summary="Post monthly flat fees (safe to re-run)",
 )
-def run_billing(period: str = PERIOD, db: Session = Depends(get_db)) -> BillingRunResult:
-    created, skipped = billing.run_monthly_billing(db, period, utcnow())
-    return BillingRunResult(period=period, created=created, skipped_existing=skipped)
+def run_billing(
+    period: str = PERIOD,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> BillingRunResult:
+    created, skipped, held = billing.run_monthly_billing(db, settings, period, utcnow())
+    return BillingRunResult(
+        period=period, created=created, skipped_existing=skipped, not_billed=held
+    )
 
 
 @router.get("/attorneys/{attorney_id}/statement", response_model=Statement)

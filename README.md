@@ -22,8 +22,9 @@ Imagine a **school lost-and-found desk, but for people who need a lawyer**.
    right neighborhood) and hands it out in one of three fair ways:
    - **Exclusive:** one lawyer "rents" that neighborhood, so they get it.
    - **Shared:** three lawyers are asked at once. The first to raise their hand wins.
-   - **Ping tree:** lawyers line up by how much they offered. The top one gets first dibs,
-     and if they say no or take too long, the next one gets a turn.
+   - **Ping tree:** an auction. Lawyers line up by how much they bid. The top one gets first
+     dibs, and if they say no or take too long, the next one gets a turn. The market sets the
+     price: you pay $1 more than the next bid in line, never more than your own bid.
 5. Lawyers pay a **flat price** for each lead, like buying a ticket. They never pay a cut of
    what they earn, because that breaks the rules for lawyers.
 
@@ -182,10 +183,10 @@ Step 2. Why did Jamie's lead get the grade it got?
    +10  has a valid phone number and email
   = 85/100, tier A
 
-Step 3. Ping tree: the highest bidder gets the first chance
-  round 1: Avery Stone   $ 95.00  pending
-  round 2: Jordan Reyes  $ 80.00  queued
-  round 3: Sam Okafor    $ 70.00  queued
+Step 3. Ping tree: the highest bidder gets the first chance, the market sets the price
+  round 1: Avery Stone   $ 81.00  pending
+  round 2: Jordan Reyes  $ 71.00  queued
+  round 3: Sam Okafor    $ 50.00  queued
   Avery passes... Jordan is now being asked, and accepts.
 
 Step 5. Shared: three attorneys are asked at once, first to click wins
@@ -194,7 +195,7 @@ Step 5. Shared: three attorneys are asked at once, first to click wins
 
 Step 6. Billing: flat fees only
   Avery Stone   $   750.00   (included, territory)
-  Jordan Reyes  $    80.00   (per_lead)
+  Jordan Reyes  $    71.00   (per_lead)
   Morgan Lee    $   500.00   (subscription)
   Riley Chen    $    35.00   (per_lead)
 ```
@@ -223,12 +224,38 @@ That's why the business rules read like a spec and test in milliseconds.
 |---|---|---|---|---|
 | **Exclusive** | An attorney rents this ZIP + practice area | Only the owner | Owner, instantly | Included in the monthly territory fee |
 | **Shared** (speed to lead) | Default for most practice areas | Up to 3 at once, fewest-leads-today first | First to accept | Each attorney's own flat price |
-| **Ping tree** | Personal injury, med-mal, workers' comp | Up to 3, one at a time, highest bid first | First "yes" down the line | The winner's own bid |
+| **Ping tree** | Personal injury, med-mal, workers' comp | Up to 3, one at a time, highest bid first (subscribers after every paying bidder) | First "yes" down the line | Market price: $1 above the next bid (or the floor), never more than the winner's bid |
 
 "Up to 3" is the number the consumer agrees to in the consent text, and no model ever
 goes past it. In the ping tree the limit counts attorneys actually asked, so someone who
 goes inactive while waiting in line doesn't use up one of the three places. Daily caps and the active flag are checked again at the moment an attorney
 accepts, not just when the offer goes out.
+
+**Attorneys set their own bids.** Each attorney gets a private, signed link to a bid page
+(`/bids/{id}`; staff send it from the dashboard's Market panel or
+`POST /api/v1/admin/attorneys/{id}/bid-link`). For every practice area it shows their place
+in line, a bid that would put them first (rounded up to a whole $10), the lowest bid accepted
+and what leads sold for in the last 30 days (the average rounded to $10, once 5 have sold),
+and lets them change their bids a limited number of times a day. Other attorneys' bids are
+never shown, and every save is recorded. Every practice area has a lowest bid
+(`ROUTER_FLOOR_PRICE_CENTS`), in set-price areas too, so no attorney paying per lead can set
+a $0 price. Sending a new link turns off the old one, and deactivating an attorney turns off
+their links for good. Subscribers see the page but can't bid: a bid would cost them nothing,
+so they're asked after paying attorneys and never set anyone's price. Auction rules
+(`ROUTER_AUCTION_PRICING`, `ROUTER_BID_INCREMENT_CENTS`) are configurable.
+
+**Legal guardrails.** Nothing is sold in a state until it's listed in
+`ROUTER_LAUNCH_STATES`, and states or practice areas a legal audit flagged (for example
+California, Texas, Colorado and Michigan entirely, and injury cases in health-data states)
+stay closed until counsel's approval is recorded. The form asks for the state and type of
+matter first and says straight away when it can't help, before anyone types details.
+Consumers agree in plain words, with a separate box for health or immigration details, are
+told which attorney received their inquiry, and can have their data found and erased; the
+worker erases data on a retention schedule unless a legal hold applies. Attorneys get leads
+only after a recorded bar-license check. See [docs/COMPLIANCE.md](docs/COMPLIANCE.md) and,
+for your lawyer, the counsel brief in the legal review pack (kept outside this repository,
+which is public). This is not
+legal advice.
 
 All of it is configurable in `.env` (`ROUTER_DISTRIBUTION_POLICY`,
 `ROUTER_SHARED_MAX_ATTORNEYS`, time limits, floor prices, business timezone). No code changes needed.

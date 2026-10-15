@@ -54,8 +54,31 @@ def make_session_factory(engine: Engine) -> sessionmaker:
 
 # Columns added after the first release. create_all() makes new tables but never changes
 # existing ones, so a database from an earlier version gets these added at startup.
-# Each must be nullable, so existing rows stay valid.
-ADDED_COLUMNS = [("leads", "max_attorneys", "INTEGER")]
+# Each must be nullable or have a default, so existing rows stay valid.
+ADDED_COLUMNS = [
+    ("leads", "max_attorneys", "INTEGER"),
+    ("attorneys", "bids_link_version", "INTEGER NOT NULL DEFAULT 0"),
+    ("offers", "price_note", "VARCHAR(200)"),
+    ("leads", "utm_medium", "VARCHAR(120)"),
+    ("leads", "utm_campaign", "VARCHAR(120)"),
+    ("leads", "utm_content", "VARCHAR(120)"),
+    ("leads", "referrer_host", "VARCHAR(120)"),
+    ("leads", "landing_path", "VARCHAR(120)"),
+    ("leads", "sensitive_consent_text", "TEXT"),
+    ("leads", "gpc", "BOOLEAN"),
+    ("leads", "legal_hold", "BOOLEAN"),
+    ("leads", "legal_hold_reason", "VARCHAR(200)"),
+    ("leads", "narrative_erased_at", "TIMESTAMP"),
+    ("leads", "erased_at", "TIMESTAMP"),
+    ("attorneys", "license_numbers", "JSON"),
+    ("attorneys", "license_verified_at", "TIMESTAMP"),
+    ("attorneys", "agreement_version", "VARCHAR(40)"),
+    ("attorneys", "agreement_accepted_at", "TIMESTAMP"),
+    ("outbox_messages", "lead_id", "VARCHAR(36)"),
+    ("outbox_messages", "payload_erased_at", "TIMESTAMP"),
+]
+# Indexes for ADDED_COLUMNS (create_all adds them only to new tables).
+ADDED_INDEXES = [("ix_outbox_messages_lead_id", "outbox_messages", "lead_id")]
 
 
 def upgrade_schema(engine: Engine) -> None:
@@ -69,3 +92,6 @@ def upgrade_schema(engine: Engine) -> None:
                 continue
             if column not in {c["name"] for c in existing.get_columns(table)}:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {guard}{column} {sql_type}"))
+        for name, table, column in ADDED_INDEXES:
+            if existing.has_table(table):
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})"))
