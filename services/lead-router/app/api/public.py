@@ -81,6 +81,9 @@ def intake(
     return IntakeResponse(
         lead_id=lead.id,
         status=lead.status,
-        message=compliance.consumer_message(lead.status, settings.platform_name),
+        message=compliance.consumer_message(
+            lead.status, settings.platform_name, lead.rejection_reasons
+        ),
         disclosure=compliance.disclosure(settings.platform_name),
+        reload_form=compliance.OUTDATED_FORM in lead.rejection_reasons,
     )

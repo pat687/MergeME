@@ -43,24 +43,27 @@ def deliver_due(
     max_attempts: int,
     batch_size: int = 50,
     time_budget_seconds: float | None = None,
+    kinds: list[str] | None = None,
 ) -> int:
     """Send what's due. Returns how many messages were delivered.
 
     With a time budget, stop starting new sends once it's used up; the rest wait
     for the next cycle. That keeps a slow mail or eXo server from holding up the
-    worker's other job, timing out offers.
+    worker's other job, timing out offers. `kinds` limits the pass to some message
+    kinds, so a slow eXo can't use up the time meant for emails.
     """
     delivered = 0
     deadline = None if time_budget_seconds is None else time.monotonic() + time_budget_seconds
     with session_factory() as db:
+        stmt = select(OutboxMessage).where(
+            OutboxMessage.sent_at.is_(None),
+            OutboxMessage.failed.is_(False),
+            OutboxMessage.next_attempt_at <= now,
+        )
+        if kinds is not None:
+            stmt = stmt.where(OutboxMessage.kind.in_(kinds))
         due = db.scalars(
-            select(OutboxMessage)
-            .where(
-                OutboxMessage.sent_at.is_(None),
-                OutboxMessage.failed.is_(False),
-                OutboxMessage.next_attempt_at <= now,
-            )
-            .order_by(OutboxMessage.id)
+            stmt.order_by(OutboxMessage.id)
             .limit(batch_size)
             # On Postgres, two workers never grab the same message.
             .with_for_update(skip_locked=True)

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from app.api.pages import STATIC
 from app.config import Settings
 from app.db import utcnow
 from app.domain import compliance
@@ -168,6 +170,7 @@ def test_every_model_respects_the_consented_number_of_attorneys(client, settings
 def test_consent_given_on_an_old_form_version_is_rejected(client):
     created = submit(client, 1, consent_version="2025-01-01")
     assert created["status"] == "rejected"
+    assert created["reload_form"] is True and "submit again" in created["message"]
     reasons = client.get(f"/api/v1/admin/leads/{created['lead_id']}", headers=ADMIN).json()
     assert any("outdated form" in r for r in reasons["rejection_reasons"])
 
@@ -204,6 +207,18 @@ def test_offer_preview_and_email_redact_contact_details(client, mailbox):
     assert accepted["contact"]["description"] == LEAKY  # full text after acceptance
 
 
+def test_redaction_catches_lowercase_names_addresses_and_dashed_phones():
+    text = "dana quillfeather here, i live at 12 elm st, call 312\u2013555\u20130199"
+    out = compliance.redact(text, names=["Dana", "Quillfeather"], phone="3125550199")
+    for secret in ("dana", "quillfeather", "12 elm st", "0199"):
+        assert secret not in out.lower()
+
+
+def test_redaction_leaves_everyday_phrases_with_numbers_alone():
+    text = "I was hit by 3 cars on the way home, 2 blocks down the street."
+    assert compliance.redact(text, names=["Jo", "Smith"]) == text
+
+
 def test_redaction_keeps_ordinary_words():
     text = "I will tell Will that 3 cars hit me down the road."
     assert compliance.redact(text, names=["Will", "Smith"]) == (
@@ -230,19 +245,32 @@ def test_pending_offer_view_reports_server_side_time_left(client):
 # Input hardening
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    "name", ["customer. Your refund: https://evil.example/claim", "bob@example.com", "R2D2"]
+    "name",
+    [
+        "customer. Your refund: https://evil.example/claim",
+        "bob@example.com",
+        "R2D2",
+        "Visit secure.barrgo-login.net",
+    ],
 )
 def test_names_cannot_carry_links_emails_or_digits(client, name):
     assert client.post("/api/v1/intake", json=inquiry_data(first_name=name)).status_code == 422
 
 
-@pytest.mark.parametrize("name", ["O'Brien-Smith Jr.", "José", "Nguyễn"])
+@pytest.mark.parametrize("name", ["O'Brien-Smith Jr.", "José", "Nguyễn", "J. R. Smith"])
 def test_real_names_are_accepted(name):
     assert inquiry(first_name=name).first_name == name
 
 
 @pytest.mark.parametrize(
-    ("raw", "ok"), [("60614-1234", True), ("606141", False), ("60614abc", False)]
+    ("raw", "ok"),
+    [
+        ("60614-1234", True),
+        ("606141", False),
+        ("60614abc", False),
+        ("\u0666\u0660\u0666\u0660\u0661", False),  # Arabic-Indic digits
+        ("\uff16\uff10\uff16\uff10\uff11", False),  # full-width digits
+    ],
 )
 def test_zip_codes_must_be_exactly_five_digits_or_zip_plus_four(raw, ok):
     if ok:
@@ -352,16 +380,31 @@ def test_no_consumer_facing_text_claims_a_recommendation(settings):
         compliance.consumer_message(s, "X")
         for s in ("offered", "assigned", "unserviceable", "rejected", "other")
     ]
+    texts.append(compliance.consumer_message("rejected", "X", [compliance.OUTDATED_FORM]))
     lead = Lead(
         id="abcdef12-0000-0000-0000-000000000000",
         first_name="Jamie",
         email="j@example.org",
         status="offered",
     )
-    texts.append(emails.consumer_receipt(settings, lead)["body"])
+    receipt = emails.consumer_receipt(settings, lead)
+    texts += [receipt["subject"], receipt["body"]]
+    # The intake page's own headings and copy (what a consumer reads before submitting).
+    page = (STATIC / "intake.html").read_text()
+    texts.append(re.sub(r"<script.*?</script>|<[^>]+>", " ", page, flags=re.DOTALL))
     for text in texts:
         for phrase in BANNED:
-            assert phrase not in text.lower(), (phrase, text)
+            assert phrase not in text.lower(), (phrase, text[:200])
+
+
+def test_receipt_contains_no_text_the_submitter_typed(settings):
+    lead = Lead(
+        id="abcdef12-0000-0000-0000-000000000000",
+        first_name="Visit secure barrgo-login",
+        email="victim@example.org",
+        status="unserviceable",
+    )
+    assert "barrgo-login" not in emails.consumer_receipt(settings, lead)["body"]
 
 
 # --------------------------------------------------------------------------- #

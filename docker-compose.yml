@@ -119,10 +119,14 @@ services:
   exo-proxy:
     profiles: ["exo"]
     image: nginx:1.30.2-alpine
+    environment:
+      EXO_HTTP_PORT: ${EXO_HTTP_PORT:-80}
     ports:
-      - "${EXO_HTTP_PORT:-80}:80"
+      # Same port inside and out, so eXo <-> ONLYOFFICE calls via exoapp.local:<port> work.
+      - "${EXO_HTTP_PORT:-80}:${EXO_HTTP_PORT:-80}"
     volumes:
       - ./infra/nginx/exo.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/templates:/etc/nginx/templates:ro
     depends_on:
       - exo
       - onlyoffice

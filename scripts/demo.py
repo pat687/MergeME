@@ -158,7 +158,8 @@ def main() -> None:
     check(a["distribution_model"] == "exclusive", "Alex's lead is exclusive")
 
     step(5, "Shared: three attorneys are asked at once, first to click wins",
-         "Two attorneys click 'accept' almost together. The database lets exactly one win.")
+         "Riley accepts first; Morgan tries a moment later and finds the lead taken. "
+         "(Truly simultaneous clicks are proven by tests/test_concurrency_postgres.py.)")
     t = lead(taylor["lead_id"])
     first = respond(offer_by(t, "Riley Chen", names), "accept")
     second = respond(offer_by(t, "Morgan Lee", names), "accept")

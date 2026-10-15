@@ -227,7 +227,7 @@ sequenceDiagram
     R->>J: activate round 2, offer email, 90s
     Note over J: no answer
     W->>R: expire_due(now): round 2 expired
-    R->>S: activate round 3 (skipped if inactive or capped; never past the consented 3)
+    R->>S: activate round 3 (skipped if inactive or capped, never past the consented 3)
     S->>R: accept -> assigned, charged $70
 ```
 
@@ -279,9 +279,10 @@ flowchart LR
 - If SMTP or eXo is down, nothing is lost. Retries back off exponentially, and after
   `ROUTER_OUTBOX_MAX_ATTEMPTS` the message is parked (`failed=true`) and shown on the dashboard.
 - Unknown message kinds fail loudly instead of being dropped.
-- Each cycle has a time budget (`ROUTER_OUTBOX_TIME_BUDGET_SECONDS`, default 5 s) and network
-  calls have short timeouts (SMTP 5 s, eXo 5 s connect / 10 s read), so a hung mail or eXo
-  server can't stop the same worker from timing out offers on schedule.
+- Emails get their own pass first, then everything else (eXo sync), each with its own time
+  budget (`ROUTER_OUTBOX_TIME_BUDGET_SECONDS`, default 5 s). Network calls have short timeouts
+  (SMTP 5 s, eXo 5 s connect / 10 s read). A hung eXo server therefore can't delay offer
+  emails, and a hung mail server can't stop the same worker from timing out offers.
 
 ## 8. eXo integration
 
@@ -307,7 +308,7 @@ for building eXo with the add-on and the version-matching caveat.
 | Token in logs | The token sits after `#` in the link (never sent to the server); the page sends it in an `X-Offer-Token` header, which isn't logged |
 | Consumer PII | Name, phone and email withheld until accepted; the description is redacted (names, phones, emails, street addresses) in previews and offer emails |
 | XSS | Pages build DOM with `textContent` only; no `innerHTML` with user data |
-| Bots and abuse | Honeypot field, link-spam and disposable-domain checks, names limited to letters (no URLs in receipts), per-IP intake rate limit |
+| Bots and abuse | Honeypot field, link-spam and disposable-domain checks, names limited to letters with no domain-like periods, receipts that contain no submitted text, per-IP intake rate limit |
 | Consent IP | Uvicorn honors `X-Forwarded-For` only from `FORWARDED_ALLOW_IPS` (default 127.0.0.1); the stored value must parse as an IP |
 | Secrets | `make init` generates random values into `.env` (mode 600); compose refuses to start without them |
 | Container | Multi-stage build, non-root user (uid 10001), health checks |

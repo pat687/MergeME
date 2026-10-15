@@ -148,6 +148,13 @@
     try {
       const res = await api("/api/v1/intake", { method: "POST", body: payload });
       if (res.status === "rejected") {
+        if (res.reload_form) {
+          // The consent wording changed while the page was open: show the new wording
+          // and ask them to tick the box again.
+          await loadMeta().catch(() => {});
+          form.consent.checked = false;
+          form.consent.focus();
+        }
         error.textContent = res.message;
         return;
       }
@@ -165,15 +172,22 @@
     }
   });
 
-  try {
+  // Loads (or reloads) the wording, so what the person agrees to is always current.
+  async function loadMeta() {
     meta = await api("/api/v1/meta");
     document.title = `Find an Attorney - ${meta.platform_name}`;
     document.getElementById("platform").textContent = meta.platform_name;
     document.getElementById("disclosure").textContent = meta.disclosure;
     document.getElementById("consent_text").textContent = meta.consent_text;
     const select = document.getElementById("practice_area");
-    select.append(h("option", { value: "" }, "Choose one..."));
+    const chosen = select.value;
+    select.replaceChildren(h("option", { value: "" }, "Choose one..."));
     for (const area of meta.practice_areas) select.append(h("option", { value: area.value }, area.label));
+    select.value = chosen;
+  }
+
+  try {
+    await loadMeta();
     button.disabled = false;
   } catch {
     error.textContent = "The form couldn't load. Please check your connection and refresh the page.";

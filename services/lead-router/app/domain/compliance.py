@@ -22,14 +22,42 @@ from app.domain.types import ChargeKind
 
 REDACTED = "[redacted]"
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[\s.-]*)?\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}(?!\d)")
-# "12 Elm St", "4500 N Lake Shore Drive". Capitalized words only, so everyday phrases
-# like "3 blocks down the road" are left alone.
-_STREET_RE = re.compile(
-    r"\b\d{1,6}\s+(?:[A-Z0-9][\w.'-]*\s+){0,4}"
+_SEP = r"[\s.\-\u2010-\u2015]*"  # spaces, dots, hyphens and the various Unicode dashes
+_PHONE_RE = re.compile(
+    rf"(?<![0-9])(?:\+?1{_SEP})?\(?[0-9]{{3}}\)?{_SEP}[0-9]{{3}}{_SEP}[0-9]{{4}}(?![0-9])"
+)
+# "12 Elm St", "4500 N Lake Shore Drive": capitalized, any suffix.
+_STREET_CAPS_RE = re.compile(
+    r"\b[0-9]{1,6}\s+(?:[A-Z0-9][\w.'-]*\s+){0,4}"
     r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Way|Place|Pl"
     r"|Terrace|Ter|Parkway|Pkwy|Highway|Hwy|Circle|Cir)\b\.?"
 )
+# "12 elm st": lowercase only with unambiguous suffixes, and never across everyday words,
+# so "3 blocks down the street" or "2 cars on the way" are left alone.
+_STREET_LOWER_RE = re.compile(
+    r"\b[0-9]{1,6}\s+((?:[a-z0-9][\w.'-]*\s+){1,3})"
+    r"(?:st|street|ave|avenue|rd|blvd|boulevard|ln|ct|hwy|pkwy)\b\.?"
+)
+_FILLER = frozenset(
+    "the a an my our your his her their this that down up on of from to in at near by across "
+    "over past along blocks block miles mile feet foot cars car minutes minute times houses "
+    "doors people kids".split()
+)
+# Names that are also everyday words: only redacted when written with a capital letter.
+_COMMON_WORDS = frozenset(
+    "will may mark rose hope bill grant chase lane june april august art dawn faith joy pat "
+    "sue ray jack guy rich frank sky summer autumn winter spring amber ruby crystal ivy holly "
+    "iris lily daisy violet rock stone hunter carter mason cash king young brown white black "
+    "green long short small little wise love man page reed wood woods hill hall field ford "
+    "bell cook baker price rice bush case park banks rivers river story star storm drew gene "
+    "gale jean sandy rusty rocky bud buck chip chuck don dean earl major judge justice liberty "
+    "harmony melody destiny trinity honey candy angel baby ace max sunny penny glen dale".split()
+)
+
+
+def _redact_lower_street(match: re.Match) -> str:
+    words = match.group(1).lower().split()
+    return match.group(0) if any(w in _FILLER for w in words) else REDACTED
 
 
 class ComplianceError(ValueError):
@@ -45,9 +73,10 @@ def redact(
 ) -> str:
     """Best-effort removal of contact details from free text shown before an attorney accepts.
 
-    Removes email addresses, US phone numbers, street addresses and the person's
-    own name (when written with a capital letter, so a first name like "Will"
-    doesn't erase the word "will").
+    Removes email addresses, US phone numbers (any common separators), street
+    addresses and the person's own name in any capitalization. Names that are also
+    everyday words ("Will", "Grant") are only removed when capitalized, so the word
+    "will" survives.
     """
     out = text
     if email:
@@ -55,15 +84,21 @@ def redact(
     out = _EMAIL_RE.sub(REDACTED, out)
     out = _PHONE_RE.sub(REDACTED, out)
     if phone and len(phone) == 10:
-        out = re.sub(rf"(?<!\d){phone[3:6]}[\s.-]*{phone[6:]}(?!\d)", REDACTED, out)
-    out = _STREET_RE.sub(REDACTED, out)
+        out = re.sub(rf"(?<![0-9]){phone[3:6]}{_SEP}{phone[6:]}(?![0-9])", REDACTED, out)
+    out = _STREET_CAPS_RE.sub(REDACTED, out)
+    out = _STREET_LOWER_RE.sub(_redact_lower_street, out)
     for name in names:
         for token in name.split():
             token = token.strip(".-'\u2019")
             if len(token) < 2:
                 continue
-            for form in {token.capitalize(), token.upper(), token[:1].upper() + token[1:]}:
-                out = re.sub(rf"(?<!\w){re.escape(form)}(?!\w)", REDACTED, out)
+            if len(token) >= 3 and token.lower() not in _COMMON_WORDS:
+                out = re.sub(
+                    rf"(?<!\w){re.escape(token)}(?!\w)", REDACTED, out, flags=re.IGNORECASE
+                )
+            else:
+                for form in {token.capitalize(), token.upper(), token[:1].upper() + token[1:]}:
+                    out = re.sub(rf"(?<!\w){re.escape(form)}(?!\w)", REDACTED, out)
     return out
 
 
@@ -101,8 +136,16 @@ def assert_flat_fee(kind: ChargeKind | str, amount_cents: int) -> None:
         raise ComplianceError("charges cannot be negative")
 
 
-def consumer_message(status: str, platform_name: str) -> str:
+OUTDATED_FORM = "consent was given on an outdated form; please reload and try again"
+
+
+def consumer_message(status: str, platform_name: str, reasons: Iterable[str] = ()) -> str:
     """What the person sees after submitting. Careful wording: no 'best lawyer' claims."""
+    if status == "rejected" and OUTDATED_FORM in reasons:
+        return (
+            "This form was updated while you had it open. Please review the consent wording "
+            "and submit again."
+        )
     messages = {
         "offered": (
             "Thanks. Your inquiry has been sent to participating attorneys who handle this "

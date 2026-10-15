@@ -70,7 +70,9 @@ Consent: the consumer agreed to be contacted (form version {lead.consent_version
 
 
 def consumer_receipt(settings: Settings, lead: Lead) -> dict[str, Any]:
-    body = f"""Hi {lead.first_name},
+    # No user-supplied text in this email: it goes to whatever address was typed in,
+    # so it must never be usable to send someone else a message from our domain.
+    body = f"""Hello,
 
 {compliance.consumer_message(lead.status, settings.platform_name)}
 

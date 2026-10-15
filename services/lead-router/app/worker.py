@@ -44,13 +44,19 @@ def run_cycle(
     now = utcnow()
     with session_factory() as db:
         expired = offers.expire_due(db, settings, now)
-    delivered = outbox.deliver_due(
-        session_factory,
-        handlers,
-        now=now,
-        max_attempts=settings.outbox_max_attempts,
-        time_budget_seconds=settings.outbox_time_budget_seconds,
-    )
+    # Emails get their own pass and time budget first, so a hung eXo server can never
+    # stop attorneys from hearing about offers before they expire. The second pass
+    # takes everything else (eXo sync, and unknown kinds, which fail loudly).
+    delivered = 0
+    for kinds in (["email"], None):
+        delivered += outbox.deliver_due(
+            session_factory,
+            handlers,
+            now=now,
+            max_attempts=settings.outbox_max_attempts,
+            time_budget_seconds=settings.outbox_time_budget_seconds,
+            kinds=kinds,
+        )
     if expired or delivered:
         log.info("worker cycle: expired=%s delivered=%s", expired, delivered)
     return {"expired": expired, "delivered": delivered}

@@ -92,11 +92,14 @@ to their state or local bar association's lawyer referral service (`LeadStatus.U
 
 ## 7. Changing the wording safely
 
-All consumer-facing compliance text lives in one file,
-[`domain/compliance.py`](../services/lead-router/app/domain/compliance.py). To change it:
+All consumer-facing compliance wording lives in one file,
+[`domain/compliance.py`](../services/lead-router/app/domain/compliance.py); the intake page
+([`static/intake.html`](../services/lead-router/app/static/intake.html)) only adds headings
+and the field hints. To change either:
 
 1. Edit the text and bump `ROUTER_DISCLOSURE_VERSION`.
 2. Run `make test`. `test_no_consumer_facing_text_claims_a_recommendation` checks the
-   disclosure, the consent text, every post-submission message and the receipt email
-   for phrases like "best", "top-rated", "matched you" or "evaluated your case".
+   disclosure, the consent text, every post-submission message, the receipt email's
+   subject and body, and the intake page's text for phrases like "best", "top-rated",
+   "matched you" or "evaluated your case".
 3. Archive the old wording. Existing leads keep the exact text they agreed to.

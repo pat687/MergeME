@@ -30,11 +30,13 @@
   const view = document.getElementById("view");
   const getOffer = () => api(`/api/v1/offers/${offerId}`, { headers: { "X-Offer-Token": token } });
   let timer = null;
+  let retry = null;
   let busy = false;
 
   function stopTimer() {
     clearInterval(timer);
-    timer = null;
+    clearTimeout(retry);
+    timer = retry = null;
   }
 
   // Count down from the server's own figure, not the browser clock (which may be off).
@@ -47,7 +49,7 @@
       span.textContent = `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, "0")}s`;
       if (secs === 0) {
         stopTimer();
-        setTimeout(load, 1500);
+        retry = setTimeout(load, 1500);  // one pending re-check at a time, never a loop
       }
     };
     stopTimer();

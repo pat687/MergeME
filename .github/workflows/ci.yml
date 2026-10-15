@@ -62,6 +62,12 @@ jobs:
         run: docker compose up -d --build --wait lead-router lead-worker mailpit
       - name: Run the narrated demo end to end
         run: make demo
+      - name: Browser checks of the three pages
+        run: |
+          npm install --no-save --prefix "$RUNNER_TEMP/pw" playwright@1.56.1
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          set -a; . ./.env; set +a
+          NODE_PATH="$RUNNER_TEMP/pw/node_modules" node scripts/ui_smoke.js
       - name: Check emails reached the test inbox
         # The worker sends the outbox every 2 seconds, so poll instead of checking once.
         run: |

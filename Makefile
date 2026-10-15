@@ -14,7 +14,7 @@ MAILPIT_UI_PORT ?= 8025
 EXO_HTTP_PORT ?= 80
 
 .DEFAULT_GOAL := help
-.PHONY: help init up up-full down logs seed demo test lint format check exo-addon backup clean
+.PHONY: help init up up-full down logs seed demo ui-check test lint format check exo-addon backup clean
 
 help: ## Show this list
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -47,6 +47,11 @@ seed: ## Load the six fictional demo attorneys
 
 demo: seed ## Run the narrated end-to-end demo against the running stack
 	@set -a; . ./.env; set +a; $(PY) scripts/demo.py
+
+ui-check: ## Browser regression checks of the three pages (needs Node; installs Playwright)
+	@npm install --no-save --silent --prefix .cache/pw playwright@1.56.1
+	@.cache/pw/node_modules/.bin/playwright install chromium
+	@set -a; . ./.env; set +a; NODE_PATH=.cache/pw/node_modules node scripts/ui_smoke.js
 
 test: ## Run the automated tests
 	cd $(ROUTER) && $(PY) -m pytest

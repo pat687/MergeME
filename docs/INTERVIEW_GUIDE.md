@@ -14,7 +14,7 @@ decisions worth highlighting, and answers to the questions you're most likely to
 > ping-tree auction. It's built to follow attorney-advertising rules: it can only charge flat
 > fees, so fee-splitting is impossible by construction. It's race-safe, every side effect
 > goes through a transactional outbox, every decision is explainable, and the whole thing
-> starts with one command and is covered by 104 automated tests, including real
+> starts with one command and is covered by 111 automated tests, including real
 > concurrency tests on Postgres, plus CI."
 
 ## 2. The 5-minute live demo
@@ -25,7 +25,7 @@ decisions worth highlighting, and answers to the questions you're most likely to
 | 2 | Open http://localhost:8000 | "Consumer side. Note the disclosure: advertising, not a law firm, attorneys pay. That wording is a compliance requirement." |
 | 3 | `make demo` | "This plays out five inquiries, one per outcome: auction, exclusive, shared, spam, and no coverage." |
 | 4 | Point at the score breakdown | "Every point has a reason. If ops asks why a lead was a B, we can show them." |
-| 5 | Point at the shared race (200 vs 409) | "Two attorneys clicked at once. A compare-and-set update guarantees exactly one wins." |
+| 5 | Point at the shared race (200 vs 409) | "Riley got there first, so Morgan gets a 409. The truly simultaneous case, threads racing on real Postgres, is proven in `test_concurrency_postgres.py`." |
 | 6 | Open http://localhost:8000/admin and click a lead | "The decision trail: who was skipped and why, every offer, every timeout." |
 | 7 | Click **open as attorney** on an offer | "Attorneys get a signed link. Until they accept, contact details are withheld and the description is redacted." |
 | 8 | Open http://localhost:8025 | "Every email went through the outbox. If SMTP were down, they'd retry with backoff." |
@@ -145,7 +145,7 @@ Use the analogies in [ELI10.md](ELI10.md):
 
 | Metric | Value |
 |---|---|
-| Automated tests | 104: unit, end-to-end API stories, and 4 Postgres concurrency tests |
+| Automated tests | 111: unit, end-to-end API stories, and 4 Postgres concurrency tests, plus 10 browser checks |
 | Distribution models | 3 |
 | Docker services | 9 (4 for the router, 5 for eXo) |
 | Router image | Multi-stage, non-root, ~300 MB |

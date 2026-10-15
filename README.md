@@ -6,7 +6,7 @@ attorneys. It's built to follow attorney-advertising ethics rules from the start
 
 [![CI](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml)
 ![Python 3.13](https://img.shields.io/badge/python-3.13-blue)
-![Tests](https://img.shields.io/badge/tests-104%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)
 ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-informational)
 
 ---
@@ -133,12 +133,14 @@ Run `make` on its own to list every command.
 
 | Check | Result |
 |---|---|
-| Unit and API tests (`make test`) | 100 passed, plus 4 concurrency tests that run against real Postgres (in CI, or with `TEST_POSTGRES_URL`) |
+| Unit and API tests (`make test`) | 107 passed, plus 4 concurrency tests that run against real Postgres (in CI, or with `TEST_POSTGRES_URL`) |
+| Browser regression checks (`make ui-check`, also in CI) | 10 of 10: Pass/Cancel, double-click accept, countdown, field errors, no submit before load, keyboard rows, refresh focus, 390px layout, no JS errors |
 | Lint and format (`ruff`) | Clean |
 | Router stack in Docker on PostgreSQL (`make up`) | Healthy; `make demo` meets all of its built-in expectations |
 | Emails through the outbox to Mailpit | 12 of 12 delivered; contact fields withheld from offer emails and the description redacted |
 | Pages in headless Chromium (desktop, phone, dark mode) | No console errors, no horizontal scrolling on phone |
 | Full eXo profile (`make up-full`) on a fresh database | All services healthy in about 3.5 minutes; login page 200 through Nginx; first-run Account Setup shown |
+| eXo on a non-80 port (`EXO_HTTP_PORT=8088`) | eXo links, the proxy port and ONLYOFFICE's host all follow the port; browser, eXo and ONLYOFFICE containers all reach `exoapp.local:8088` (in-browser document editing itself not exercised) |
 | eXo lead-capture add-on image (`make exo-addon`) | **Not built here** (eXo's Maven repository was unreachable from the build sandbox). See [infra/exo/README.md](infra/exo/README.md). |
 | eXo WebDAV bulk import | Endpoint confirmed (`/webdav/drives`, Digest auth); credential setup not verified. See [migration guide](docs/SHAREPOINT_TO_EXO.md#5-import-into-exo). |
 
@@ -293,7 +295,7 @@ barrgo-ai-stack/
 │   │   ├── schemas.py          # request/response validation
 │   │   ├── worker.py           # background worker
 │   │   └── seed.py             # six fictional demo attorneys
-│   ├── tests/                  # 104 tests: unit, API stories, Postgres concurrency
+│   ├── tests/                  # 111 tests: unit, API stories, Postgres concurrency
 │   └── Dockerfile              # multi-stage, non-root
 └── docs/                       # architecture, compliance, migration, runbook, ADRs, ELI10
 ```
@@ -321,7 +323,7 @@ barrgo-ai-stack/
 cd services/lead-router
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-pytest                      # 100 tests in ~4 s (+4 with TEST_POSTGRES_URL set)
+pytest                      # 107 tests in ~4 s (+4 with TEST_POSTGRES_URL set)
 ruff check . && ruff format --check .
 uvicorn app.main:create_app --factory --reload   # SQLite, embedded worker, http://localhost:8000
 python -m app.seed          # demo attorneys

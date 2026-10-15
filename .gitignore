@@ -1,5 +1,6 @@
 # Secrets and local data
 .env
+.cache/
 backups/
 *.db
 

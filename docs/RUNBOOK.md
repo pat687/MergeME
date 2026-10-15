@@ -44,7 +44,7 @@ How to run, check, back up and fix the stack. Commands are run from the repo roo
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `make up` says `run make init` | No `.env` | `make init` |
-| Port 8000 (or 8025, or 80) is already in use | Another program has it | Set `ROUTER_HTTP_PORT`, `MAILPIT_UI_PORT` or `EXO_HTTP_PORT` in `.env`. The links in emails follow `ROUTER_HTTP_PORT` automatically. For eXo on a port other than 80, also set `EXO_PUBLIC_HOST=exoapp.local:<port>`. |
+| Port 8000 (or 8025, or 80) is already in use | Another program has it | Set `ROUTER_HTTP_PORT`, `MAILPIT_UI_PORT` or `EXO_HTTP_PORT` in `.env`. The links in emails follow `ROUTER_HTTP_PORT` automatically. For eXo on a port other than 80, also set `EXO_PUBLIC_HOST=exoapp.local:<port>`; the proxy then listens on that port inside Docker too, so eXo and ONLYOFFICE can reach each other (verified on 8088). |
 | Intake returns `429 Too Many Requests` | Per-IP rate limit (default 10 per minute) | Expected under abuse. For load tests, raise `ROUTER_INTAKE_RATE_LIMIT_PER_MINUTE` (or set it to 0). |
 | An attorney gets "you can't take this lead right now: daily lead cap reached" | They've accepted `daily_cap` leads since local midnight (`ROUTER_BUSINESS_TIMEZONE`) | Raise their cap with `PATCH /api/v1/admin/attorneys/{id}`, or wait until midnight |
 | An intake is rejected with "consent was given on an outdated form" | `ROUTER_DISCLOSURE_VERSION` changed while their page was open | Expected: they need to reload and agree to the current wording |
@@ -65,11 +65,12 @@ Router (leads, offers, ledger, audit):
 ```bash
 make backup        # prints "Backup FAILED" and exits non-zero if pg_dump didn't finish
 gunzip -c backups/router-20261015-020000.sql.gz \
-  | docker compose exec -T router-db psql -v ON_ERROR_STOP=1 -U router router
+  | docker compose exec -T router-db psql -1 -v ON_ERROR_STOP=1 -U router router
 ```
 
-The dump includes `DROP ... IF EXISTS` statements, so restoring replaces the current data,
-and `ON_ERROR_STOP=1` makes a bad dump fail loudly instead of half-restoring.
+The dump includes `DROP ... IF EXISTS` statements, so restoring replaces the current data.
+`-1` runs the whole restore as one transaction and `ON_ERROR_STOP=1` stops at the first
+error, so a bad or truncated dump rolls back completely and leaves the current data as it was.
 
 eXo keeps data in three places: MySQL (`exo_db_data`), files (`exo_data`) and the search
 index (`exo_search_data`, which can be rebuilt). Back up the first two together while eXo is stopped:

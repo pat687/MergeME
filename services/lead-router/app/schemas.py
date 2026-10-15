@@ -78,13 +78,15 @@ US_STATES = frozenset(
         "PR",
     }
 )
-ZIP_RE = re.compile(r"^\d{5}$")
-ZIP_PLUS4_RE = re.compile(r"^(\d{5})(?:-\d{4})?$")
+# [0-9], not \d: \d also matches Arabic-Indic and full-width digits, which would slip
+# through and then match no attorney's ZIP.
+ZIP_RE = re.compile(r"^[0-9]{5}\Z")
+ZIP_PLUS4_RE = re.compile(r"^([0-9]{5})(?:-[0-9]{4})?\Z")
 NAME_PUNCTUATION = frozenset(" '-.\u2019")
 
 
 def _digits(value: str) -> str:
-    return re.sub(r"\D", "", value)
+    return re.sub(r"[^0-9]", "", value)
 
 
 def _check_name(value: str) -> str:
@@ -97,6 +99,8 @@ def _check_name(value: str) -> str:
         ch.isalpha() or ch in NAME_PUNCTUATION for ch in value
     ):
         raise ValueError("use letters only (spaces, hyphens, apostrophes and periods are fine)")
+    if re.search(r"\.[^\W\d_]", value):  # "J. R. Smith" is fine, "barrgo-login.net" isn't
+        raise ValueError("a period must be followed by a space")
     return value
 
 
@@ -109,7 +113,7 @@ def _check_states(value: list[str]) -> list[str]:
 
 
 def _check_service_zips(value: list[str]) -> list[str]:
-    bad = [z for z in value if not re.fullmatch(r"\d{3}|\d{5}", z)]
+    bad = [z for z in value if not re.fullmatch(r"[0-9]{3}|[0-9]{5}", z)]
     if bad:
         raise ValueError(f"service_zips must be 3 or 5 digits: {bad}")
     return value
@@ -190,6 +194,9 @@ class IntakeResponse(BaseModel):
     status: LeadStatus
     message: str
     disclosure: str
+    reload_form: bool = Field(
+        default=False, description="True when the form's consent wording changed; reload it"
+    )
 
 
 # --------------------------------------------------------------------------- #
