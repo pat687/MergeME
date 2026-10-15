@@ -6,7 +6,7 @@ attorneys. It's built to follow attorney-advertising ethics rules from the start
 
 [![CI](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml)
 ![Python 3.13](https://img.shields.io/badge/python-3.13-blue)
-![Tests](https://img.shields.io/badge/tests-249%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-251%20passing-brightgreen)
 ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-informational)
 
 ---
@@ -136,6 +136,19 @@ Run `make` on its own to list every command.
 
 ---
 
+## Going live
+
+To put it online at your own domain with HTTPS, follow **[docs/DEPLOY.md](docs/DEPLOY.md)**.
+On one Ubuntu server (a Hostinger VPS, for example), `deploy/install.sh` asks a few
+questions, then does the rest:
+- installs Docker and turns on a firewall;
+- puts Caddy in front for automatic HTTPS;
+- starts the router in production mode;
+- schedules nightly backups.
+
+It starts as a soft launch: the form is online but accepts no inquiries until you open a
+state counsel has approved.
+
 ## Screenshots
 
 | Intake form (with disclosures and consent) | Ops dashboard (score math and decision trail) |
@@ -152,8 +165,8 @@ Run `make` on its own to list every command.
 
 | Check | Result |
 |---|---|
-| Unit and API tests (`make test`) | 244 passed, plus 5 concurrency tests that run against real Postgres (in CI, or with `TEST_POSTGRES_URL`) |
-| Browser regression checks (`make ui-check`, also in CI) | 26 of 26: Pass with Cancel/Escape/Enter, old `?t=` links, double-click accept, countdown, screen-reader status and load errors, field errors with the real reason, no submit before load, table rows with real buttons, refresh that keeps focus and scroll position (focused row on or off screen), live detail panel that doesn't move the page and keeps the focused link visible, each lead's offers table starting at the left edge, 390px layout, intake that says up front which states and matters it can't take, injury questions and health consent only for injury matters, the privacy policy filled in from the real settings, the attorney bid page (floor message, moving to first, keyboard focus), a read-only page for subscribers, a market panel refresh that keeps a text selection, no JS errors. The checks for the dashboard and offer-page fixes were confirmed to fail when the old code is put back |
+| Unit and API tests (`make test`) | 246 passed, plus 5 concurrency tests that run against real Postgres (in CI, or with `TEST_POSTGRES_URL`) |
+| Browser regression checks (`make ui-check`, also in CI) | 27 of 27: Pass with Cancel/Escape/Enter, old `?t=` links, double-click accept, countdown, screen-reader status and load errors, field errors with the real reason, no submit before load, table rows with real buttons, refresh that keeps focus and scroll position (focused row on or off screen), live detail panel that doesn't move the page and keeps the focused link visible, each lead's offers table starting at the left edge, 390px layout, intake that says up front which states and matters it can't take (and, before any state is open, that it isn't accepting inquiries yet), injury questions and health consent only for injury matters, the privacy policy filled in from the real settings, the attorney bid page (floor message, moving to first, keyboard focus), a read-only page for subscribers, a market panel refresh that keeps a text selection, no JS errors. The checks for the dashboard and offer-page fixes were confirmed to fail when the old code is put back |
 | Lint and format (`ruff`) | Clean |
 | Router stack in Docker on PostgreSQL (`make up`) | Healthy; `make demo` meets all of its built-in expectations |
 | Emails through the outbox to Mailpit | 12 of 12 delivered; contact fields withheld from offer emails and the description redacted |
@@ -328,6 +341,7 @@ barrgo-ai-stack/
 ├── infra/
 │   ├── nginx/exo.conf          # reverse proxy for eXo + ONLYOFFICE
 │   └── exo/                    # optional: eXo image with the lead-capture add-on
+├── deploy/                     # production on one server: install.sh, Caddy (HTTPS), compose overlay
 ├── scripts/
 │   ├── init-env.sh             # creates .env with random secrets
 │   └── demo.py                 # narrated end-to-end demo (standard library only)
@@ -341,7 +355,7 @@ barrgo-ai-stack/
 │   │   ├── schemas.py          # request/response validation
 │   │   ├── worker.py           # background worker
 │   │   └── seed.py             # six fictional demo attorneys
-│   ├── tests/                  # 249 tests: unit, API stories, Postgres concurrency
+│   ├── tests/                  # 251 tests: unit, API stories, Postgres concurrency
 │   └── Dockerfile              # multi-stage, non-root
 └── docs/                       # architecture, compliance, migration, runbook, ADRs, ELI10
 ```
@@ -356,7 +370,8 @@ barrgo-ai-stack/
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Engineers: components, data model, sequences, concurrency |
 | [COMPLIANCE.md](docs/COMPLIANCE.md) | Legal/ops: which rule each feature satisfies |
 | [SHAREPOINT_TO_EXO.md](docs/SHAREPOINT_TO_EXO.md) | IT: mapping SharePoint concepts to eXo, migration steps |
-| [RUNBOOK.md](docs/RUNBOOK.md) | Operators: start, stop, back up, troubleshoot, go live |
+| [DEPLOY.md](docs/DEPLOY.md) | Going live: one Hostinger VPS, HTTPS, soft launch, updates |
+| [RUNBOOK.md](docs/RUNBOOK.md) | Operators: start, stop, back up, troubleshoot, production checklist |
 | [INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md) | You: pitch, demo script, Q&A |
 | [adr/](docs/adr/) | Architecture Decision Records: why each big choice was made |
 | [infra/exo/README.md](infra/exo/README.md) | Optional eXo lead-capture add-on and version matching |
@@ -369,7 +384,7 @@ barrgo-ai-stack/
 cd services/lead-router
 python3 -m venv .venv && . .venv/bin/activate   # Python 3.12+ (on a Mac: python3.13)
 pip install -e ".[dev]"
-pytest                      # 244 tests in ~12 s (+5 with TEST_POSTGRES_URL set)
+pytest                      # 246 tests in ~12 s (+5 with TEST_POSTGRES_URL set)
 ruff check . && ruff format --check .
 uvicorn app.main:create_app --factory --reload   # SQLite, embedded worker, http://localhost:8000
 python -m app.seed          # demo attorneys

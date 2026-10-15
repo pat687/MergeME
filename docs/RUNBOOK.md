@@ -2,6 +2,11 @@
 
 How to run, check, back up and fix the stack. Commands are run from the repo root.
 
+> **On a server set up with `deploy/install.sh`,** start, stop and check the site as in
+> [DEPLOY.md](DEPLOY.md#stopping-and-starting), not with `make up` / `make down`: those
+> don't start Caddy, so the site goes offline. Port 8000 isn't published there either, so
+> health checks go through `https://<your domain>/readyz` or `./deploy/install.sh status`.
+
 ## Daily operations
 
 | Task | Command |
@@ -62,8 +67,10 @@ How to run, check, back up and fix the stack. Commands are run from the repo roo
 
 ## Sending real email (Hostinger)
 
-Locally every email goes to the Mailpit test inbox. To send real email from
-`info@legalleadrouter.com` (a Hostinger Email mailbox), add this to `.env` and run `make up`:
+Locally every email goes to the Mailpit test inbox. On a server set up with
+`deploy/install.sh` ([DEPLOY.md](DEPLOY.md)), the settings below are written for you. To send
+real email from `info@legalleadrouter.com` (a Hostinger Email mailbox) elsewhere, add this to
+`.env` and run `make up`:
 
 ```bash
 ROUTER_SMTP_HOST=smtp.hostinger.com
@@ -214,6 +221,17 @@ inquiry's from the same person, and a legal hold also keeps the lead's sent emai
   Attorneys who haven't accepted that version stop getting leads.
 
 ## Going to production
+
+**On one server, follow [DEPLOY.md](DEPLOY.md).** `deploy/install.sh` covers several of
+the items below:
+- the domain and TLS;
+- demo mode off;
+- the legal entity settings;
+- Hostinger SMTP;
+- Mailpit not exposed;
+- the reverse proxy and the trusted proxy address;
+- a login in front of `/admin` and `/docs`;
+- nightly backups.
 
 With `ROUTER_DEMO_MODE=false` the router refuses to start unless the public URL is
 `https://`, the mail server isn't Mailpit, license checks are on, and the legal entity name
