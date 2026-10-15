@@ -14,7 +14,7 @@ decisions worth highlighting, and answers to the questions you're most likely to
 > ping-tree auction. It's built to follow attorney-advertising rules: it can only charge flat
 > fees, so fee-splitting is impossible by construction. It's race-safe, every side effect
 > goes through a transactional outbox, every decision is explainable, and the whole thing
-> starts with one command and is covered by 60 automated tests and CI."
+> starts with one command and is covered by 61 automated tests and CI."
 
 ## 2. The 5-minute live demo
 
@@ -128,7 +128,7 @@ Use the analogies in [ELI10.md](ELI10.md):
 
 | Metric | Value |
 |---|---|
-| Automated tests | 60 (unit + end-to-end API stories), about 2 s |
+| Automated tests | 61 (unit + end-to-end API stories), about 2 s |
 | Distribution models | 3 |
 | Docker services | 9 (4 for the router, 5 for eXo) |
 | Router image | Multi-stage, non-root, ~300 MB |

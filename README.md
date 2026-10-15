@@ -6,7 +6,7 @@ attorneys. It's built to follow attorney-advertising ethics rules from the start
 
 [![CI](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml)
 ![Python 3.13](https://img.shields.io/badge/python-3.13-blue)
-![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-61%20passing-brightgreen)
 ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-informational)
 
 ---
@@ -134,7 +134,7 @@ Run `make` on its own to list every command.
 
 | Check | Result |
 |---|---|
-| Unit and API tests (`make test`) | 60 passed |
+| Unit and API tests (`make test`) | 61 passed |
 | Lint and format (`ruff`) | Clean |
 | Router stack in Docker on PostgreSQL (`make up`) | Healthy; `make demo` meets all of its built-in expectations |
 | Emails through the outbox to Mailpit | 12 of 12 delivered; offer emails contain no consumer contact details |
@@ -278,7 +278,7 @@ barrgo-ai-stack/
 │   │   ├── schemas.py          # request/response validation
 │   │   ├── worker.py           # background worker
 │   │   └── seed.py             # six fictional demo attorneys
-│   ├── tests/                  # 60 tests: unit + end-to-end API stories
+│   ├── tests/                  # 61 tests: unit + end-to-end API stories
 │   └── Dockerfile              # multi-stage, non-root
 └── docs/                       # architecture, compliance, migration, runbook, ADRs, ELI10
 ```
@@ -306,7 +306,7 @@ barrgo-ai-stack/
 cd services/lead-router
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-pytest                      # 60 tests, about 2 seconds
+pytest                      # 61 tests, about 2 seconds
 ruff check . && ruff format --check .
 uvicorn app.main:create_app --factory --reload   # SQLite, embedded worker, http://localhost:8000
 python -m app.seed          # demo attorneys

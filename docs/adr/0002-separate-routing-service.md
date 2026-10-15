@@ -19,7 +19,7 @@ add-on's REST API, delivered via the outbox.
 
 - **Different rates of change.** Routing rules change often; eXo upgrades are big and rare.
 - **Failure isolation.** An eXo restart or upgrade must not stop intake.
-- **Testability.** A pure-Python domain layer runs 60 tests in about 2 seconds. Testing
+- **Testability.** A pure-Python domain layer runs 61 tests in about 2 seconds. Testing
   inside an eXo container takes minutes to boot.
 - **Version coupling.** Add-ons must be compiled against the exact eXo version (see
   `infra/exo/README.md`). A REST integration avoids that coupling.
