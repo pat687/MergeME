@@ -42,16 +42,23 @@ _COURT_WORDS = frozenset(
     "family divorce circuit county district superior supreme juvenile probate traffic small "
     "claims municipal housing appeals appellate bankruptcy federal state criminal civil drug "
     "domestic relations tax chancery magistrate justice city immigration common pleas "
-    "surrogate surrogates orphans".split()
+    "surrogate surrogates orphans violence treatment dependency delinquency law".split()
 )
 _YEAR_RE = re.compile(r"(?:19|20)[0-9]{2}\s")
-# "I live at 4417 Kedzie", "lived at 918 n albany", "address is: 88 Wabash": no suffix,
-# but the lead-in makes it an address. A lowercase street name is only taken after a
-# direction letter, so "lived at 2 different places" is left alone.
+# "I live at 4417 Kedzie", "i live at 4417 kedzie", "lived at 918 north albany",
+# "address is: 88 Wabash": no suffix, but the lead-in makes it an address. A lowercase
+# word only counts as a street after a house number of 3+ digits and when it isn't an
+# everyday word, so "lived at 2 different places" and "stayed at 1500 a month" stay.
+_NOT_A_STREET = (
+    r"(?i:a|an|the|per|percent|dollars|bucks|days|weeks|months|years|times|people|feet|"
+    r"miles|acres|different|other|several|various|separate|least|most|first|last)\b"
+)
 _LIVES_AT_RE = re.compile(
     r"(?i:\b((?:(?:live|lives|lived|living|reside|resides|resided|residing"
     r"|stay|stays|stayed|staying)\s+(?:at|on)|address(?:\s+is)?:?)\s+))"
-    r"[0-9]{1,6}(?:\s+[NSEWnsew]\.?(?!\w)(?:\s+[a-z][\w'.-]*)?|\s+[A-Z][\w'.-]*){1,3}"
+    r"(?:[0-9]{3,6}(?:\s+(?i:north|south|east|west|[nsew]\.?(?!\w)))?\s+(?!" + _NOT_A_STREET + r")"
+    r"[a-z][\w'.-]*"
+    r"|[0-9]{1,6}(?:\s+[NSEWnsew]\.?(?!\w)(?:\s+[a-z][\w'.-]*)?|\s+[A-Z][\w'.-]*){1,3})"
 )
 # "12 elm st": lowercase only with unambiguous suffixes, and never across everyday words,
 # so "3 blocks down the street" or "2 cars on the way" are left alone.

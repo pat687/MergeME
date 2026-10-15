@@ -22,6 +22,7 @@ rules keep that safe:
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -168,9 +169,18 @@ def activate(db: Session, settings: Settings, lead: Lead, offer: Offer, now: dat
     return True
 
 
+_CONSENTED_RE = re.compile(r"up to ([0-9]+) participating")
+
+
 def consent_limit(settings: Settings, lead: Lead) -> int:
     """How many attorneys this person agreed to: the number stored with their consent."""
-    return lead.max_attorneys or settings.shared_max_attorneys
+    if lead.max_attorneys is not None:
+        return lead.max_attorneys
+    # Leads from before the number was stored: it's in the consent text they agreed to.
+    agreed = _CONSENTED_RE.search(lead.consent_text or "")
+    if agreed:
+        return min(int(agreed.group(1)), settings.shared_max_attorneys)
+    return settings.shared_max_attorneys
 
 
 def _asked(db: Session, lead: Lead) -> int:

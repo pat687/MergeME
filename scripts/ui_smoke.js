@@ -87,8 +87,10 @@ async function newFamilyLead() {
   lead = await adminGet(`/api/v1/admin/leads/${lead.id}`);
   check("Enter in the reason box confirms the pass", lead.offers.find((o) => o.id === offer.id).status === "declined");
 
-  // Offer page: a bad link's error is announced, not just shown.
-  await page.goto(`${BASE}/offer/${lead.offers[0].id}#t=not-a-real-token`);
+  // Offer page: a bad link's error is announced, not just shown. (Start from a blank
+  // page and a different offer, so this is always a full page load, not a #hash change.)
+  await page.goto("about:blank");
+  await page.goto(`${BASE}/offer/${lead.offers.find((o) => o.id !== offer.id).id}#t=not-a-real-token`);
   await page.waitForSelector("#view .error");
   check("a link that fails to load is announced to screen readers",
     (await page.textContent("#status")).includes("not found"));
@@ -244,7 +246,12 @@ async function newFamilyLead() {
     after[0] >= scrolledTo && after[1] === lead.id, JSON.stringify({ scrolledTo, after }));
 
   // A focused row that is on screen, a few rows down, must not jump either. (Removing
-  // the focused button while rebuilding makes the browser re-anchor the page.)
+  // the focused button while rebuilding makes the browser re-anchor the page.) Needs a
+  // few rows, so add leads on a stack that doesn't have them yet.
+  while ((await page.$$("#rows tr")).length < 6) {
+    const extra = await newFamilyLead();
+    await page.waitForSelector(`#rows button[data-id="${extra.id}"]`, { timeout: 8000 });
+  }
   const rowId = await page.evaluate(() => {
     const button = document.querySelector("#rows tr:nth-child(5) button.rowlink");
     button.focus({ preventScroll: true });
@@ -266,7 +273,14 @@ async function newFamilyLead() {
   // sideways), then change the lead: the panel updates, focus stays, nothing moves.
   // (The lead opened above is still the one shown in the panel.)
   await page.locator("#detail a").first().focus();
-  const place = () => page.evaluate(() => [window.scrollY, document.querySelector("#detail .table-wrap")?.scrollLeft ?? 0]);
+  // Put the focused link near the top of the screen: that's where a rebuild used to jump.
+  await page.evaluate(() => window.scrollBy(0, document.activeElement.getBoundingClientRect().top - 60));
+  const place = () => page.evaluate(() => {
+    const f = document.activeElement, w = f?.closest(".table-wrap");
+    const inView = !!w && f.getBoundingClientRect().left >= w.getBoundingClientRect().left - 1
+      && f.getBoundingClientRect().right <= w.getBoundingClientRect().right + 1;
+    return [window.scrollY, inView];
+  });
   const placeBefore = await place();
   const first = lead.offers[0];
   await fetch(`${BASE}/api/v1/offers/${first.id}/decline`, {
@@ -278,9 +292,19 @@ async function newFamilyLead() {
   check("open lead keeps updating, with focus kept in the panel",
     (await page.$("#detail >> text=smoke-test pass reason")) !== null
       && await page.evaluate(() => document.getElementById("detail").contains(document.activeElement)));
-  check("updating the open lead doesn't move the page or the offers table",
-    Math.abs(placeAfter[0] - placeBefore[0]) <= 2 && placeAfter[1] === placeBefore[1],
+  check("updating the open lead doesn't move the page, and the focused link stays visible",
+    Math.abs(placeAfter[0] - placeBefore[0]) <= 2 && placeAfter[1] === true,
     JSON.stringify({ placeBefore, placeAfter }));
+
+  // Opening a different lead starts its offers table at the left edge, not wherever the
+  // previous lead's table had been scrolled to.
+  const sidewaysBefore = await page.evaluate(() => document.querySelector("#detail .table-wrap").scrollLeft);
+  await page.focus(`#rows button[data-id="${another.id}"]`);
+  await page.keyboard.press("Enter");
+  await page.waitForSelector(`#detail a[href*="${another.offers[0].id}"]`);  // the new lead is shown
+  const sidewaysAfter = await page.evaluate(() => document.querySelector("#detail .table-wrap")?.scrollLeft ?? 0);
+  check("a different lead's offers table starts at the left edge",
+    sidewaysBefore > 0 && sidewaysAfter === 0, JSON.stringify({ sidewaysBefore, sidewaysAfter }));
 
   // Bid page: an attorney sees where they rank, gets a clear reason when a bid is too
   // low, and moves to first place by raising it. Keyboard focus survives both saves.
