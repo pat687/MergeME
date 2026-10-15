@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Find an Attorney</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main class="wrap">
+  <header class="top">
+    <h1 id="platform">Legal Connect</h1>
+    <span class="tag">Attorney advertising</span>
+  </header>
+  <p class="muted">Tell us what happened. Participating attorneys who handle this kind of matter in your area can contact you.</p>
+  <p class="notice" id="disclosure"></p>
+
+  <form id="intake" class="card" novalidate>
+    <fieldset>
+      <legend>About you</legend>
+      <div class="grid">
+        <label>First name<input name="first_name" autocomplete="given-name" required></label>
+        <label>Last name<input name="last_name" autocomplete="family-name" required></label>
+        <label>Email<input name="email" type="email" autocomplete="email" required></label>
+        <label>Phone<input name="phone" type="tel" autocomplete="tel" placeholder="(312) 555-0142" required></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Where you are</legend>
+      <div class="grid">
+        <label>ZIP code<input name="zip_code" inputmode="numeric" maxlength="5" autocomplete="postal-code" required></label>
+        <label>State<input name="state" maxlength="2" placeholder="IL" required></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Your matter</legend>
+      <div class="grid">
+        <label>Type of legal matter<select name="practice_area" id="practice_area" required></select></label>
+        <label>When did it happen? (optional)<input name="incident_date" type="date"></label>
+      </div>
+      <label style="margin-top:12px">What happened?
+        <textarea name="description" minlength="10" maxlength="2000" required
+          placeholder="A few sentences in your own words. Please don't include passwords or account numbers."></textarea>
+      </label>
+      <label class="check"><input type="checkbox" name="injured"> I was injured</label>
+      <label class="check"><input type="checkbox" name="medical_treatment"> I received medical treatment</label>
+      <label class="check"><input type="checkbox" name="court_date_soon"> I have a court date coming up</label>
+      <label class="check"><input type="checkbox" name="has_attorney"> I already have an attorney for this</label>
+    </fieldset>
+
+    <!-- Honeypot: hidden from people, irresistible to bots. -->
+    <div class="hp" aria-hidden="true">
+      <label>Website<input name="website" tabindex="-1" autocomplete="off"></label>
+    </div>
+
+    <fieldset>
+      <legend>Consent</legend>
+      <label class="check"><input type="checkbox" name="consent" required> <span id="consent_text"></span></label>
+    </fieldset>
+
+    <p class="error" id="error" role="alert"></p>
+    <button type="submit" id="submit">Send my inquiry</button>
+  </form>
+
+  <section class="card" id="result" hidden aria-live="polite">
+    <h2 style="margin-top:0" id="result_title">Thank you</h2>
+    <p id="result_message"></p>
+    <p class="small muted">Reference number: <span class="mono" id="result_ref"></span></p>
+  </section>
+</main>
+
+<script type="module">
+  import { api, h } from "/static/common.js";
+
+  const form = document.getElementById("intake");
+  const meta = await api("/api/v1/meta");
+  document.title = `Find an Attorney - ${meta.platform_name}`;
+  document.getElementById("platform").textContent = meta.platform_name;
+  document.getElementById("disclosure").textContent = meta.disclosure;
+  document.getElementById("consent_text").textContent = meta.consent_text;
+  const select = document.getElementById("practice_area");
+  select.append(h("option", { value: "" }, "Choose one..."));
+  for (const area of meta.practice_areas) select.append(h("option", { value: area.value }, area.label));
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const error = document.getElementById("error");
+    const button = document.getElementById("submit");
+    error.textContent = "";
+    const data = Object.fromEntries(new FormData(form));
+    const payload = {
+      ...data,
+      incident_date: data.incident_date || null,
+      injured: form.injured.checked,
+      medical_treatment: form.medical_treatment.checked,
+      court_date_soon: form.court_date_soon.checked,
+      has_attorney: form.has_attorney.checked,
+      consent: form.consent.checked,
+      consent_version: meta.consent_version,
+      utm_source: new URLSearchParams(location.search).get("utm_source"),
+    };
+    if (!payload.consent) {
+      error.textContent = "Please tick the consent box so attorneys are allowed to contact you.";
+      return;
+    }
+    button.disabled = true;
+    try {
+      const res = await api("/api/v1/intake", { method: "POST", body: payload });
+      if (res.status === "rejected") {
+        error.textContent = res.message;
+        return;
+      }
+      document.getElementById("result_message").textContent = res.message;
+      document.getElementById("result_ref").textContent = res.lead_id.slice(0, 8).toUpperCase();
+      form.hidden = true;
+      document.getElementById("result").hidden = false;
+    } catch (err) {
+      error.textContent = err.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

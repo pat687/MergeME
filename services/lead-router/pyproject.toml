@@ -1,0 +1,46 @@
+[project]
+name = "lead-router"
+version = "1.0.0"
+description = "Legal lead intake, scoring and distribution service for the Barrgo stack."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.143.1",
+  "uvicorn[standard]==0.54.0",
+  "SQLAlchemy==2.1.4",
+  "pydantic[email]==2.14.1",
+  "pydantic-settings==2.16.0",
+  "httpx==0.28.1",
+  "psycopg[binary]==3.3.6",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.17.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+  # Starlette nudges toward httpx2 for its TestClient; httpx is still what the app itself uses.
+  "ignore:Using `httpx` with `starlette.testclient`",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["B008"]  # FastAPI's Depends() in default arguments is the framework idiom.

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Lead Offer</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main class="wrap">
+  <header class="top">
+    <h1>Lead offer</h1>
+    <span class="tag">For participating attorneys</span>
+  </header>
+  <div id="view" class="card"><p class="muted">Loading...</p></div>
+  <p class="small muted">You decide whether to take on any matter. Contact details are shared only after you accept.</p>
+</main>
+
+<script type="module">
+  import { api, fill, h, label, money, phone, pill, when } from "/static/common.js";
+
+  const offerId = location.pathname.split("/").pop();
+  const token = new URLSearchParams(location.search).get("t") || "";
+  const view = document.getElementById("view");
+  let timer;
+
+  function countdown(iso) {
+    const span = h("span", { class: "mono" });
+    const tick = () => {
+      const secs = Math.max(0, Math.round((new Date(iso) - Date.now()) / 1000));
+      span.textContent = `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, "0")}s`;
+      if (secs === 0) { clearInterval(timer); load(); }
+    };
+    clearInterval(timer);
+    tick();
+    timer = setInterval(tick, 1000);
+    return span;
+  }
+
+  async function act(action) {
+    const reason = action === "decline" ? prompt("Optional: why are you passing? (e.g. conflict, too busy)") : null;
+    try {
+      render(await api(`/api/v1/offers/${offerId}/${action}`, { method: "POST", body: { token, reason } }));
+    } catch (err) {
+      await load();
+      view.prepend(h("p", { class: "error", role: "alert" }, err.message));
+    }
+  }
+
+  function render(o) {
+    const facts = [
+      ["Practice area", label(o.practice_area)],
+      ["Location", `${o.zip_code}, ${o.state}`],
+      ["Quality", `Tier ${o.tier} (${o.score}/100)`],
+      ["Price", money(o.price_cents)],
+      ["How it's offered", label(o.model)],
+    ];
+    fill(view,
+      h("div", { class: "toolbar" }, pill(o.status), o.status === "pending" && o.expires_at
+        ? h("span", { class: "small muted" }, "Time left: ", countdown(o.expires_at)) : null),
+      h("p", {}, o.notice),
+      h("div", { class: "facts" }, facts.map(([k, v]) => h("div", { class: "fact" }, h("div", { class: "k" }, k), h("div", { class: "v" }, v)))),
+      h("h3", {}, "What they told us"),
+      h("p", {}, `"${o.summary}"`),
+      o.contact ? h("div", { class: "notice" },
+        h("strong", {}, o.contact.name), h("br"),
+        `Phone: ${phone(o.contact.phone)}`, h("br"),
+        `Email: ${o.contact.email}`, h("br"),
+        `Incident date: ${o.contact.incident_date ?? "not given"}`,
+        h("p", {}, o.contact.description)) : null,
+      o.status === "pending" ? h("div", { class: "actions" },
+        h("button", { onclick: () => act("accept") }, "Accept lead"),
+        h("button", { class: "secondary", onclick: () => act("decline") }, "Pass")) : null,
+      o.expires_at ? h("p", { class: "small muted" }, `Offer deadline: ${when(o.expires_at)}`) : null,
+    );
+  }
+
+  async function load() {
+    try {
+      render(await api(`/api/v1/offers/${offerId}?t=${encodeURIComponent(token)}`));
+    } catch (err) {
+      fill(view, h("p", { class: "error" }, err.message));
+    }
+  }
+  load();
+</script>
+</body>
+</html>

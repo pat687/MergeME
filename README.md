@@ -1,0 +1,316 @@
+# Barrgo AI Stack
+
+**A self-hosted, open-source replacement for SharePoint (eXo Platform), plus a legal lead
+router that captures, scores and distributes consumer legal inquiries to participating
+attorneys. It's built to follow attorney-advertising ethics rules from the start.**
+
+[![CI](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/pat687/barrgo-ai-stack/actions/workflows/ci.yml)
+![Python 3.13](https://img.shields.io/badge/python-3.13-blue)
+![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen)
+![Runs locally](https://img.shields.io/badge/runs-100%25%20local-informational)
+
+---
+
+## The 30-second version (explained like you're 10)
+
+Imagine a **school lost-and-found desk, but for people who need a lawyer**.
+
+1. Someone fills out a form: *"I got hurt in a car crash in Chicago."*
+2. A helper at the desk checks it's real. No robots, no pranks, no repeats.
+3. The helper gives it a grade from 0 to 100 and writes down *why*, like a teacher's rubric.
+4. Then the helper finds lawyers who are allowed to help (right state, right kind of case,
+   right neighborhood) and hands it out in one of three fair ways:
+   - **Exclusive:** one lawyer "rents" that neighborhood, so they get it.
+   - **Shared:** three lawyers are asked at once. The first to raise their hand wins.
+   - **Ping tree:** lawyers line up by how much they offered. The top one gets first dibs,
+     and if they say no or take too long, the next one gets a turn.
+5. Lawyers pay a **flat price** for each lead, like buying a ticket. They never pay a cut of
+   what they earn, because that breaks the rules for lawyers.
+
+The **eXo Platform** part is the shared office: documents, team spaces, a wiki and online
+Word/Excel editing. It runs on your own computer instead of renting Microsoft SharePoint.
+
+More kid-friendly detail: [docs/ELI10.md](docs/ELI10.md).
+
+---
+
+## What's in the box
+
+| Piece | What it does | Tech |
+|---|---|---|
+| **Lead Router API** | Intake → scrub → score → match → distribute → bill | Python 3.13, FastAPI, SQLAlchemy 2 |
+| **Worker** | Times out unanswered offers, advances the ping tree, sends email | Same image, separate process |
+| **Intake form** | Public form with disclosures, consent capture and a bot trap | Vanilla HTML/JS, no framework |
+| **Attorney offer page** | Signed-link page: preview, countdown, accept/pass | Vanilla HTML/JS |
+| **Ops dashboard** | KPIs, lead table, score breakdown, full decision trail | Vanilla HTML/JS |
+| **eXo Platform 7.2** | Documents, spaces, wiki, tasks: the SharePoint replacement | Official eXo Community image |
+| **ONLYOFFICE** | Edit Word/Excel/PowerPoint in the browser (replaces Office Online) | Official image |
+| **PostgreSQL / MySQL / Elasticsearch** | Router data / eXo data / eXo search | Official images |
+| **Mailpit** | Local test inbox that catches every email | Official image |
+
+Everything is free and open source, and runs on one machine with `docker compose`.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Public
+        C([Consumer]) -->|intake form| R
+    end
+
+    subgraph Router["Lead Router (FastAPI)"]
+        R[Intake API] --> S[Scrub] --> SC[Score] --> M[Match] --> D{Distribute}
+        D -->|exclusive| A1[Assign]
+        D -->|shared| O[Offers]
+        D -->|ping tree| O
+        O -->|accept| A1
+        A1 --> B[(Ledger:<br/>flat fees only)]
+        R -. every decision .-> AU[(Audit trail)]
+        A1 & O --> OB[(Outbox)]
+    end
+
+    W[[Worker]] -->|expire offers,<br/>next bidder| O
+    W -->|send| OB
+    OB -->|email| MP[Mailpit / SMTP]
+    OB -.->|optional sync| EXO
+
+    subgraph Workspace["eXo Platform (replaces SharePoint)"]
+        EXO[eXo 7.2] --- ES[(Elasticsearch)]
+        EXO --- MY[(MySQL)]
+        EXO --- OO[ONLYOFFICE]
+    end
+
+    T([Attorney]) -->|signed link| O
+    ST([Staff]) -->|dashboard| R
+    ST -->|documents, wiki, tasks| EXO
+```
+
+Deeper dive, including sequence diagrams for each distribution model, the data model and
+the concurrency design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+---
+
+## Quick start
+
+Requirements: Docker with Compose v2, `make`, Python 3 (for the demo script only).
+
+```bash
+git clone https://github.com/pat687/barrgo-ai-stack.git && cd barrgo-ai-stack
+make up      # creates .env with random secrets, builds, starts (about 1 minute)
+make demo    # loads 6 fictional attorneys and plays out every scenario
+```
+
+| Open | URL |
+|---|---|
+| Intake form | http://localhost:8000 |
+| Ops dashboard (admin key is printed by `make init` and stored in `.env`) | http://localhost:8000/admin |
+| Interactive API docs | http://localhost:8000/docs |
+| Test inbox (every email sent) | http://localhost:8025 |
+
+Want the SharePoint replacement too? `make up-full` adds eXo Platform, ONLYOFFICE, MySQL,
+Elasticsearch and Nginx (about 10 GB RAM; first boot takes several minutes). Then open
+http://exoapp.local after adding `127.0.0.1 exoapp.local` to your hosts file.
+Migration guide: **[docs/SHAREPOINT_TO_EXO.md](docs/SHAREPOINT_TO_EXO.md)**.
+
+Run `make` on its own to list every command.
+
+---
+
+## Screenshots
+
+| Intake form (with disclosures and consent) | Ops dashboard (score math and decision trail) |
+|---|---|
+| ![Intake form](docs/images/intake-form.png) | ![Dashboard](docs/images/dashboard.png) |
+
+| Attorney offer: preview, no personal data | After accepting: contact details released |
+|---|---|
+| ![Offer preview](docs/images/offer-preview.png) | ![Offer accepted](docs/images/offer-accepted.png) |
+
+---
+
+## What has been verified
+
+| Check | Result |
+|---|---|
+| Unit and API tests (`make test`) | 60 passed |
+| Lint and format (`ruff`) | Clean |
+| Router stack in Docker on PostgreSQL (`make up`) | Healthy; `make demo` meets all of its built-in expectations |
+| Emails through the outbox to Mailpit | 12 of 12 delivered; offer emails contain no consumer contact details |
+| Pages in headless Chromium (desktop, phone, dark mode) | No console errors, no horizontal scrolling on phone |
+| Full eXo profile (`make up-full`) on a fresh database | All services healthy in about 3.5 minutes; login page 200 through Nginx; first-run Account Setup shown |
+| eXo lead-capture add-on image (`make exo-addon`) | **Not built here** (eXo's Maven repository was unreachable from the build sandbox). See [infra/exo/README.md](infra/exo/README.md). |
+| eXo WebDAV bulk import | Endpoint confirmed (`/webdav/drives`, Digest auth); credential setup not verified. See [migration guide](docs/SHAREPOINT_TO_EXO.md#5-import-into-exo). |
+
+---
+
+## What the demo shows (real output)
+
+```text
+Step 1. Five people send in the intake form
+  Jamie    personal_injury  60601  ->  offered        (ping tree)
+  Alex     personal_injury  60614  ->  assigned       (exclusive territory)
+  Taylor   family_law       60601  ->  offered        (shared)
+  Bot      personal_injury  60601  ->  rejected       (honeypot + link spam)
+  Dana     immigration      60601  ->  unserviceable  (no participating attorney; points to the bar)
+
+Step 2. Why did Jamie's lead get the grade it got?
+   +30  Personal Injury inquiries start at 30
+   +20  incident happened in the last 30 days
+   +20  reports an injury and received medical treatment
+    +5  gave a reasonable description
+   +10  has a valid phone number and email
+  = 85/100, tier A
+
+Step 3. Ping tree: the highest bidder gets the first chance
+  round 1: Avery Stone   $ 95.00  pending
+  round 2: Jordan Reyes  $ 80.00  queued
+  round 3: Sam Okafor    $ 70.00  queued
+  Avery passes... Jordan is now being asked, and accepts.
+
+Step 5. Shared: three attorneys are asked at once, first to click wins
+  Riley clicks accept  -> HTTP 200 (accepted)
+  Morgan clicks accept -> HTTP 409 (another attorney claimed this lead first)
+
+Step 6. Billing: flat fees only
+  Avery Stone   $   750.00   (included, territory)
+  Jordan Reyes  $    80.00   (per_lead)
+  Morgan Lee    $   500.00   (subscription)
+  Riley Chen    $    35.00   (per_lead)
+```
+
+---
+
+## How one lead flows through the system
+
+| Step | Plain English | Where in the code |
+|---|---|---|
+| 1. Capture | Save what they typed, plus proof of consent (time, IP, exact wording) | [`services/pipeline.py`](services/lead-router/app/services/pipeline.py) |
+| 2. Scrub | Reject no-consent, bots, fake phones, disposable emails, duplicates | [`domain/scrubbing.py`](services/lead-router/app/domain/scrubbing.py) |
+| 3. Score | 0–100 with a written reason for every point; tier A/B/C | [`domain/scoring.py`](services/lead-router/app/domain/scoring.py) |
+| 4. Match | Active, licensed in the state, handles the practice area, covers the ZIP, under daily cap | [`domain/matching.py`](services/lead-router/app/domain/matching.py) |
+| 5. Distribute | Exclusive territory, else the practice area's policy (shared or ping tree) | [`domain/distribution.py`](services/lead-router/app/domain/distribution.py) |
+| 6. Respond | Accept / pass / time out, race-safe | [`services/offers.py`](services/lead-router/app/services/offers.py) |
+| 7. Bill | Flat per-lead price, or $0 under a subscription/territory | [`services/billing.py`](services/lead-router/app/services/billing.py) |
+| 8. Notify | Emails and eXo sync go through a transactional outbox | [`services/outbox.py`](services/lead-router/app/services/outbox.py) |
+
+**Design rule:** everything in `app/domain/` is pure logic with no database and no network.
+That's why the business rules read like a spec and test in milliseconds.
+
+### The three distribution models
+
+| Model | When it's used | Who is asked | Who wins | Price |
+|---|---|---|---|---|
+| **Exclusive** | An attorney rents this ZIP + practice area | Only the owner | Owner, instantly | Included in the monthly territory fee |
+| **Shared** (speed to lead) | Default for most practice areas | Up to 3 at once, fewest-leads-today first | First to accept | Each attorney's own flat price |
+| **Ping tree** | Personal injury, med-mal, workers' comp | One at a time, highest bid first | First "yes" down the line | The winner's own bid |
+
+All three are configurable through environment variables (`ROUTER_DISTRIBUTION_POLICY`,
+`ROUTER_SHARED_MAX_ATTORNEYS`, time limits and floor prices). No code changes needed.
+
+---
+
+## Compliance by design
+
+This system is built to stay inside attorney-advertising rules (ABA Model Rules 7.1, 7.2,
+5.4 and 1.5(e)). See **[docs/COMPLIANCE.md](docs/COMPLIANCE.md)**. Highlights:
+
+- **No fee-splitting is possible.** The ledger only knows flat fees. No charge type mentions
+  settlements or percentages, and the attorney API *rejects* a field like `fee_percent`.
+- **Price never depends on outcome.** Attorneys are charged when a lead is delivered, not if
+  the person hires them.
+- **Honest consumer wording:** "attorney advertising", "not a law firm", "attorneys pay to
+  receive inquiries", "we do not recommend any attorney and have not evaluated your matter".
+- **Consent evidence on every lead:** exact text, version, timestamp, IP and user agent.
+- **Contact details stay hidden** until an attorney accepts; offer emails contain no personal data.
+- **No dead ends:** if no attorney covers the area, the person is pointed to their state bar's
+  referral service.
+
+> This is engineering, not legal advice. Rules vary by state; have counsel review before launch.
+
+---
+
+## Engineering highlights (the interview version)
+
+- **Race-safe "first click wins."** Two attorneys accepting at the same moment can't both
+  get the lead. A compare-and-set update (`UPDATE ... WHERE assigned_attorney_id IS NULL`)
+  plus consistent lock ordering (lead row before offer rows) prevents double-assignment *and*
+  deadlocks. Tested in [`test_api_flow.py`](services/lead-router/tests/test_api_flow.py).
+- **Transactional outbox.** Emails and eXo updates are written in the same database
+  transaction as the change that caused them, then delivered by the worker with exponential
+  backoff. No lost emails, and no emails about changes that rolled back.
+- **Explainability.** Every lead has an append-only audit trail: who was skipped and why,
+  every score point, every offer, every timeout. The dashboard shows it.
+- **Signed links, no passwords.** Attorneys act through HMAC-signed links. Nothing to store,
+  and they can't be forged. A bad link looks exactly like a missing offer, so offer IDs
+  can't be probed.
+- **12-factor config.** One image runs both API and worker. All settings come from the
+  environment, with random secrets generated by `make init`.
+- **Secure defaults.** Non-root container, XSS-safe rendering (no `innerHTML` with user data),
+  constant-time key comparison, timezone-safe timestamps, PII-free offer previews.
+
+Ready-made talking points and likely interview questions:
+**[docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md)**.
+
+---
+
+## Project layout
+
+```text
+barrgo-ai-stack/
+├── docker-compose.yml          # whole stack; eXo services behind the "exo" profile
+├── Makefile                    # make up / up-full / demo / test / backup ...
+├── .env.example                # every setting, documented; `make init` fills secrets
+├── infra/
+│   ├── nginx/exo.conf          # reverse proxy for eXo + ONLYOFFICE
+│   └── exo/                    # optional: eXo image with the lead-capture add-on
+├── scripts/
+│   ├── init-env.sh             # creates .env with random secrets
+│   └── demo.py                 # narrated end-to-end demo (standard library only)
+├── services/lead-router/
+│   ├── app/
+│   │   ├── domain/             # pure business rules (scrub, score, match, distribute, compliance)
+│   │   ├── services/           # use cases (pipeline, offers, billing, outbox, email, eXo sync)
+│   │   ├── api/                # thin HTTP routes (public, attorney, admin, pages)
+│   │   ├── static/             # intake form, offer page, dashboard
+│   │   ├── models.py           # database tables
+│   │   ├── schemas.py          # request/response validation
+│   │   ├── worker.py           # background worker
+│   │   └── seed.py             # six fictional demo attorneys
+│   ├── tests/                  # 60 tests: unit + end-to-end API stories
+│   └── Dockerfile              # multi-stage, non-root
+└── docs/                       # architecture, compliance, migration, runbook, ADRs, ELI10
+```
+
+---
+
+## Documentation
+
+| Doc | For |
+|---|---|
+| [ELI10.md](docs/ELI10.md) | Anyone. The whole system in kid-friendly language |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Engineers: components, data model, sequences, concurrency |
+| [COMPLIANCE.md](docs/COMPLIANCE.md) | Legal/ops: which rule each feature satisfies |
+| [SHAREPOINT_TO_EXO.md](docs/SHAREPOINT_TO_EXO.md) | IT: mapping SharePoint concepts to eXo, migration steps |
+| [RUNBOOK.md](docs/RUNBOOK.md) | Operators: start, stop, back up, troubleshoot, go live |
+| [INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md) | You: pitch, demo script, Q&A |
+| [adr/](docs/adr/) | Architecture Decision Records: why each big choice was made |
+| [infra/exo/README.md](infra/exo/README.md) | Optional eXo lead-capture add-on and version matching |
+
+---
+
+## Development
+
+```bash
+cd services/lead-router
+python -m venv .venv && . .venv/bin/activate
+pip install -e ".[dev]"
+pytest                      # 60 tests, about 2 seconds
+ruff check . && ruff format --check .
+uvicorn app.main:create_app --factory --reload   # SQLite, embedded worker, http://localhost:8000
+python -m app.seed          # demo attorneys
+```
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint, tests, a Docker build,
+validation of both compose profiles, and a live smoke test of the containerized stack on every push.
