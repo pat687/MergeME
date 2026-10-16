@@ -85,3 +85,34 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+  production:
+    # The install from docs/DEPLOY.md, run as on a server (a private test certificate
+    # replaces Let's Encrypt, and the runner's packages and firewall are left alone).
+    name: Production install (HTTPS, soft launch)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint the shell scripts
+        run: shellcheck deploy/install.sh scripts/init-env.sh
+      - name: Install
+        env:
+          DEPLOY_NONINTERACTIVE: "1"
+          DEPLOY_SKIP_SYSTEM: "1"
+          DEPLOY_LOCAL_CERTS: "1"
+          ROUTER_DOMAIN: app.example.com
+          BUSINESS_EMAIL: info@example.com
+          ROUTER_LEGAL_ENTITY_NAME: O'Brien Example LLC
+          ROUTER_POSTAL_ADDRESS: 1 Main St, Chicago, IL 60601
+          SMTP_PASSWORD: not-a-real-password
+          STAFF_PASSWORD: ci-dashboard-password
+        run: ./deploy/install.sh
+      - name: Check it (HTTPS, staff login, closed ports, soft launch)
+        run: ./deploy/install.sh status
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 200
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

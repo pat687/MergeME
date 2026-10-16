@@ -159,7 +159,10 @@
 
     const st = stateCode();
     let closed = "";
-    if (/^[A-Z]{2}$/.test(st) && !(st in meta.open)) {
+    if (!Object.keys(meta.open).length) {
+      // No state is open yet (a soft launch): say so before anyone fills anything in.
+      closed = "Sorry, we aren't accepting inquiries yet.";
+    } else if (/^[A-Z]{2}$/.test(st) && !(st in meta.open)) {
       closed = `Sorry, we aren't accepting inquiries from ${st} yet.`;
     } else if (/^[A-Z]{2}$/.test(st) && a && !meta.open[st].includes(a)) {
       closed = `Sorry, we aren't accepting ${label()} inquiries from ${st} yet.`;
